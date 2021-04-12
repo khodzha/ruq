@@ -1,0 +1,21 @@
+[package]
+name = "ruq"
+version = "0.1.0"
+authors = ["Shamir Khodzha <khodzha.sh@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1.4", features = ["net", "io-util"] }
+tokio-util = { version = "0.6.5", features = ["codec"] }
+futures = "0.3.13"
+pin-project = "1"
+anyhow = "1.0.40"
+pin-utils = "0.1.0"
+bytes = "1.0"
+log = "0.4.0"
+
+
+[dev-dependencies]
+tokio = { version = "1.4", features = ["net", "io-util", "macros", "rt-multi-thread"] }
