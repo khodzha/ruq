@@ -2,7 +2,7 @@ use bytes::{Buf, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 
 use super::protocol;
-use super::protocol::{ConvertError, FromMqttBytes, PacketType, Publish, ToMqttBytes, Packet};
+use super::protocol::{ConvertError, FromMqttBytes, Packet, PacketType, Publish, ToMqttBytes};
 
 pub struct MqttCodec;
 

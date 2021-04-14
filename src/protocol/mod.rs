@@ -2,10 +2,14 @@ use std::convert::{TryFrom, TryInto};
 
 pub use connack::Connack;
 pub use connect::Connect;
+pub use pingreq::PingReq;
+pub use pingresp::PingResp;
 pub use properties::Property;
 pub use puback::Puback;
 pub use publish::Publish;
 pub use publish::QoS;
+pub use subscribe::Subscribe;
+pub use suback::Suback;
 
 use log::{debug, error, info};
 
@@ -55,13 +59,59 @@ pub fn parse_pkt(data: &[u8]) -> Result<Option<Packet>, std::io::Error> {
             }
             Err(e) => {
                 error!(
-                    "Something went wrong with parsing publish pkt, err = {:?}",
+                    "Something went wrong with parsing connack pkt, err = {:?}",
                     e
                 );
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     format!(
-                        "Something went wrong with parsing publish pkt, err = {:?}",
+                        "Something went wrong with parsing connack pkt, err = {:?}",
+                        e
+                    ),
+                ));
+            }
+        },
+        PacketType::PingResponse => match PingResp::convert_from_mqtt(&data) {
+            Ok((pkt, _bytes_read)) => return Ok(Some(Packet::PingResp(pkt))),
+            Err(ConvertError::NotEnoughBytes) => {
+                info!("Received publish but not enough bytes?");
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("parse_pkt expects that full pkt is present"),
+                ));
+            }
+            Err(e) => {
+                error!(
+                    "Something went wrong with parsing connack pkt, err = {:?}",
+                    e
+                );
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Something went wrong with parsing connack pkt, err = {:?}",
+                        e
+                    ),
+                ));
+            }
+        },
+        PacketType::SubscribeAck => match Suback::convert_from_mqtt(&data) {
+            Ok((pkt, _bytes_read)) => return Ok(Some(Packet::SubscribeAck(pkt))),
+            Err(ConvertError::NotEnoughBytes) => {
+                info!("Received publish but not enough bytes?");
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("parse_pkt expects that full pkt is present"),
+                ));
+            }
+            Err(e) => {
+                error!(
+                    "Something went wrong with parsing connack pkt, err = {:?}",
+                    e
+                );
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Something went wrong with parsing connack pkt, err = {:?}",
                         e
                     ),
                 ));
@@ -80,15 +130,16 @@ pub enum Packet {
     Connack(connack::Connack),
     Publish(publish::Publish),
     PubAck(puback::Puback),
+    PingReq(pingreq::PingReq),
+    PingResp(pingresp::PingResp),
+    Subscribe(subscribe::Subscribe),
+    SubscribeAck(suback::Suback),
     /* TODO:
     PubReceived,
     PubRelease,
     PubComplete,
-    Subscribe,
-    SubscribeAck,
     Unsubscribe,
     UnsubscribeAck,
-    PingRequest,
     PingResponse,
     Disconnect,
     Auth,
@@ -100,7 +151,9 @@ impl ToMqttBytes for Packet {
         match self {
             Self::Connect(p) => p.convert_to_mqtt(),
             Self::Publish(p) => p.convert_to_mqtt(),
-            _ => unimplemented!()
+            Self::PingReq(p) => p.convert_to_mqtt(),
+            Self::Subscribe(p) => p.convert_to_mqtt(),
+            _ => unimplemented!(),
         }
     }
 }
@@ -339,6 +392,10 @@ impl FromMqttBytes for Vec<u8> {
 
 mod connack;
 mod connect;
+mod pingreq;
+mod pingresp;
 mod properties;
 mod puback;
 mod publish;
+mod subscribe;
+mod suback;

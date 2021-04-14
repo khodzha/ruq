@@ -1,64 +1,81 @@
+use std::cell::RefCell;
+use std::io::Result as IOResult;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
-use std::sync::Arc;
-use std::cell::RefCell;
 
 use anyhow::{anyhow, Context as AnyContext, Error, Result as AResult};
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use futures::{Future, SinkExt, StreamExt};
 use pin_project::pin_project;
 use tokio::io::AsyncWriteExt;
-use tokio_util::codec::{Framed};
 use tokio::net::TcpStream;
 use tokio::net::ToSocketAddrs;
+use tokio::time::{sleep, Duration, Instant};
+use tokio_util::codec::Framed;
 
-use crate::protocol::{ConvertError, FromMqttBytes, PacketType, Publish, ToMqttBytes, Packet};
+use crate::protocol::{ConvertError, FromMqttBytes, Packet, PacketType, Publish, ToMqttBytes};
+
+pub use crate::protocol::QoS;
+
+pub trait TCPConnectFuture: Future<Output = IOResult<TcpStream>> + Send {}
+
+impl<T> TCPConnectFuture for T where T: Future<Output = IOResult<TcpStream>> + Send {}
+
+struct MQTTFuture {
+    f: Pin<Box<dyn Future<Output = IOResult<()>> + Send>>,
+}
+
+impl Future for MQTTFuture {
+    type Output = IOResult<()>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.as_mut().f).poll(cx)
+    }
+}
 
 pub struct Client {
     tx: Sender<Command>,
 }
 
+#[derive(Debug)]
 pub enum Notification {
-    Connack,
-}
-
-enum MqttConnectState {
-    Connect(Pin<Box<dyn Future<Output=std::io::Result<()>>>>),
-    Connack(Pin<Box<dyn Future<Output=Option<std::io::Result<Packet>>>>>)
+    Connack(String),
+    Message(String)
 }
 
 #[pin_project(project = ELProj)]
-enum EventLoopState {
+enum EventLoopState<F: TCPConnectFuture> {
     NotConnected {
-        f: Pin<Box<dyn Future<Output=std::io::Result<TcpStream>>>>
-    },
-    Connected {
-        mqtt_stream: Arc<RefCell<Framed<TcpStream, mqtt_stream::MqttCodec>>>,
-        state: MqttConnectState
+        #[pin]
+        f: F,
     },
     MqttConnected {
-        mqtt_stream: Arc<RefCell<Framed<TcpStream, mqtt_stream::MqttCodec>>>,
+        #[pin]
+        f: MQTTFuture,
     },
     GracefulShutdown,
     AbruptDisconnect,
 }
 
 #[pin_project]
-pub struct EventLoop<A>
+pub struct EventLoop<A, F>
 where
-    A: ToSocketAddrs
+    A: ToSocketAddrs + Send,
+    F: TCPConnectFuture,
 {
     #[pin]
-    state: EventLoopState,
-    commands_rx: Receiver<Command>,
+    state: EventLoopState<F>,
+    commands_rx: Option<Receiver<Command>>,
     notifications_tx: Sender<Notification>,
     address: A,
 }
 
-impl<A> Future for EventLoop<A>
+impl<A, F> Future for EventLoop<A, F>
 where
-    A: ToSocketAddrs,
+    A: ToSocketAddrs + Send,
+    F: TCPConnectFuture,
 {
     type Output = Result<(), Error>;
 
@@ -67,35 +84,32 @@ where
         loop {
             let next = {
                 match me.state.as_mut().project() {
-                    ELProj::NotConnected { f } => {
-                        match f.as_mut().poll(cx) {
-                            Poll::Ready(Err(e)) => {
-                                return Poll::Ready(Err(anyhow!(
-                                    "Failed to connect, reason = {:?}",
-                                    e
-                                )));
-                            }
-                            Poll::Pending => {
-                                return Poll::Pending;
-                            }
-                            Poll::Ready(Ok(tcp_stream)) => {
-                                let mqtt_stream = Arc::new(RefCell::new(Framed::new(
-                                    tcp_stream,
-                                    mqtt_stream::MqttCodec::new(),
-                                )));
-                                let mut pkt = protocol::Connect::new("whatever.devops.svc.example.org");
-                                pkt.keep_alive(8);
+                    ELProj::NotConnected { mut f } => match f.as_mut().poll(cx) {
+                        Poll::Ready(Err(e)) => {
+                            return Poll::Ready(Err(anyhow!(
+                                "Failed to connect, reason = {:?}",
+                                e
+                            )));
+                        }
+                        Poll::Pending => {
+                            return Poll::Pending;
+                        }
+                        Poll::Ready(Ok(tcp_stream)) => {
+                            let mqtt_stream =
+                                Framed::new(tcp_stream, mqtt_stream::MqttCodec::new());
 
-                                let mqtt_stream_ = mqtt_stream.clone();
-                                let f = Box::pin(async move {
-                                    mqtt_stream_.borrow_mut().send(protocol::Packet::Connect(pkt)).await.map(|_| ())
-                                });
+                            let f = Box::pin(poll(
+                                mqtt_stream,
+                                me.commands_rx.take().unwrap(),
+                                me.notifications_tx.clone(),
+                            ));
 
-                                EventLoopState::Connected { mqtt_stream, state: MqttConnectState::Connect(f) }
+                            EventLoopState::MqttConnected {
+                                f: MQTTFuture { f: f },
                             }
                         }
-                    }
-                    ELProj::Connected { mqtt_stream, state } => {
+                    },
+                    /*ELProj::Connected { mqtt_stream, state } => {
                         match state {
                             MqttConnectState::Connect(connect) => match connect.as_mut().poll(cx) {
                                 Poll::Pending => {
@@ -124,13 +138,17 @@ where
                                 },
                                 Poll::Ready(Some(Ok(pkt))) => {
                                     eprintln!("Received connack: {:?}", pkt);
-                                    EventLoopState::MqttConnected { mqtt_stream: mqtt_stream.clone() }
+                                    let ping = sleep(Duration::from_secs(8));
+                                    EventLoopState::MqttConnected {
+                                        mqtt_stream: mqtt_stream.clone(),
+                                        next_ping: ping,
+                                    }
                                 }
                             }
                         }
-                    }
-                    ELProj::MqttConnected { .. } => {
-                        return Poll::Pending;
+                    }*/
+                    ELProj::MqttConnected { f } => {
+                        return f.poll(cx).map_err(|e| e.into());
                     }
                     ELProj::AbruptDisconnect => {
                         return Poll::Pending;
@@ -146,32 +164,92 @@ where
     }
 }
 
+async fn poll(
+    mut mqtt_stream: Framed<TcpStream, mqtt_stream::MqttCodec>,
+    mut commands_rx: Receiver<Command>,
+    mut sender: Sender<Notification>,
+) -> IOResult<()> {
+    let mut pkt = protocol::Connect::new("whatever.devops.svc.example.org");
+    pkt.keep_alive(8);
+
+    mqtt_stream.send(protocol::Packet::Connect(pkt)).await?;
+
+    let pkt = mqtt_stream.next().await;
+    sender.send(Notification::Connack(format!("{:?}", pkt)));
+
+    let mut ping = tokio::time::interval_at(
+        Instant::now() + Duration::from_secs(8),
+        Duration::from_secs(8),
+    );
+
+    loop {
+        let tick = ping.tick();
+        tokio::pin!(tick);
+        let next_mqtt = mqtt_stream.next();
+        tokio::pin!(next_mqtt);
+        let next_cmd = commands_rx.next();
+        tokio::pin!(next_cmd);
+
+        tokio::select! {
+            _ = &mut tick => {
+                let pkt = protocol::PingReq::new();
+                mqtt_stream.send(protocol::Packet::PingReq(pkt)).await?;
+            }
+            req = &mut next_mqtt => {
+                eprintln!("Incoming req: {:?}", req);
+                sender.send(Notification::Message(format!("{:?}", pkt)));
+            },
+            cmd = &mut next_cmd => {
+                match cmd {
+                    Some(x) => match x {
+                        Command::Publish => {}
+                        Command::Subscribe(topic, qos) => {
+                            let pkt = protocol::Subscribe::new(&topic, 1, qos);
+                            mqtt_stream.send(protocol::Packet::Subscribe(pkt)).await;
+                        }
+                        Command::Unsubscribe => {}
+                        Command::Disconnect => {}
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub enum Command {
-    Connect,
     Publish,
-    Subscribe,
+    Subscribe(String, QoS),
     Unsubscribe,
     Disconnect,
 }
 
 impl Client {
-    pub fn new<A: ToOwned>(address: A) -> (Self, EventLoop<A::Owned>, Receiver<Notification>)
+    pub fn new<A: ToOwned>(
+        address: A,
+    ) -> (
+        Self,
+        EventLoop<A::Owned, impl TCPConnectFuture>,
+        Receiver<Notification>,
+    )
     where
         A: ToOwned,
-        A::Owned: ToSocketAddrs + Clone + 'static
+        A::Owned: ToSocketAddrs + Clone + Send + 'static,
     {
         let (tx, rx) = channel(100);
         let (notif_tx, notif_rx) = channel(100);
 
         let address = address.to_owned();
         let address_ = address.clone();
-        let p = Box::pin(async move {
-            TcpStream::connect(&address_).await
-        });
+        let p = async move {
+            TcpStream::connect(address_).await
+        };
 
         let evloop = EventLoop {
             address,
-            commands_rx: rx,
+            commands_rx: Some(rx),
             notifications_tx: notif_tx,
             state: EventLoopState::NotConnected { f: p },
         };
@@ -180,9 +258,16 @@ impl Client {
     }
 
     pub fn connect(&mut self) -> Result<(), Error> {
+        /*self.tx
+        .try_send(Command::Connect)
+        .with_context(|| "Connection failed")*/
+        Ok(())
+    }
+
+    pub fn subscribe(&mut self, topic: String, qos: QoS) -> Result<(), Error> {
         self.tx
-            .try_send(Command::Connect)
-            .with_context(|| "Connection failed")
+            .try_send(Command::Subscribe(topic, qos))
+            .with_context(|| "Subscribe chan send failed")
     }
 }
 

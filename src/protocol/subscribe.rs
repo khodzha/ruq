@@ -1,3 +1,5 @@
+use super::{QoS, ToMqttBytes, VBI};
+
 #[derive(Debug)]
 pub struct Subscribe {
     topic: String,
