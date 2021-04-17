@@ -2,16 +2,17 @@ use std::convert::{TryFrom, TryInto};
 
 pub use connack::Connack;
 pub use connect::Connect;
+pub use disconnect::Disconnect;
 pub use pingreq::PingReq;
 pub use pingresp::PingResp;
 pub use properties::Property;
 pub use puback::Puback;
 pub use publish::Publish;
 pub use publish::QoS;
-pub use subscribe::Subscribe;
 pub use suback::Suback;
-pub use unsubscribe::Unsubscribe;
+pub use subscribe::Subscribe;
 pub use unsuback::Unsuback;
+pub use unsubscribe::Unsubscribe;
 
 use log::{error, info};
 
@@ -119,29 +120,6 @@ pub fn parse_pkt(data: &[u8]) -> Result<Option<Packet>, std::io::Error> {
                 ));
             }
         },
-        PacketType::SubscribeAck => match Suback::convert_from_mqtt(&data) {
-            Ok((pkt, _bytes_read)) => return Ok(Some(Packet::SubAck(pkt))),
-            Err(ConvertError::NotEnoughBytes) => {
-                info!("Received publish but not enough bytes?");
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("parse_pkt expects that full pkt is present"),
-                ));
-            }
-            Err(e) => {
-                error!(
-                    "Something went wrong with parsing connack pkt, err = {:?}",
-                    e
-                );
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!(
-                        "Something went wrong with parsing connack pkt, err = {:?}",
-                        e
-                    ),
-                ));
-            }
-        },
         PacketType::UnsubscribeAck => match Unsuback::convert_from_mqtt(&data) {
             Ok((pkt, _bytes_read)) => return Ok(Some(Packet::UnsubAck(pkt))),
             Err(ConvertError::NotEnoughBytes) => {
@@ -184,12 +162,12 @@ pub enum Packet {
     SubAck(Suback),
     Unsubscribe(Unsubscribe),
     UnsubAck(Unsuback),
+    Disconnect(Disconnect),
     /* TODO:
     PubReceived,
     PubRelease,
     PubComplete,
     PingResponse,
-    Disconnect,
     Auth,
     */
 }
@@ -202,7 +180,12 @@ impl ToMqttBytes for Packet {
             Self::PingReq(p) => p.convert_to_mqtt(),
             Self::Subscribe(p) => p.convert_to_mqtt(),
             Self::Unsubscribe(p) => p.convert_to_mqtt(),
-            _ => unimplemented!(),
+            Self::Disconnect(p) => p.convert_to_mqtt(),
+            Self::PingResp(_) => unimplemented!("Client never sends this"),
+            Self::Connack(_) => unimplemented!("Client never sends this"),
+            Self::PubAck(_) => unimplemented!("Client never sends this"),
+            Self::SubAck(_) => unimplemented!("Client never sends this"),
+            Self::UnsubAck(_) => unimplemented!("Client never sends this"),
         }
     }
 }
@@ -441,12 +424,13 @@ impl FromMqttBytes for Vec<u8> {
 
 mod connack;
 mod connect;
+mod disconnect;
 mod pingreq;
 mod pingresp;
 mod properties;
 mod puback;
 mod publish;
-mod subscribe;
 mod suback;
-mod unsubscribe;
+mod subscribe;
 mod unsuback;
+mod unsubscribe;

@@ -45,7 +45,11 @@ async fn main() {
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    client.publish("topic/test".into(), "hello from 1.rs".into(), QoS::AtMostOnce);
+    client.publish(
+        "topic/test".into(),
+        "hello from 1.rs".into(),
+        QoS::AtMostOnce,
+    );
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 

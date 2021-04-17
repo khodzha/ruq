@@ -8,10 +8,7 @@ pub struct Unsubscribe {
 
 impl Unsubscribe {
     pub fn new(topics: Vec<String>, pktid: u16) -> Self {
-        Self {
-            topics,
-            pktid,
-        }
+        Self { topics, pktid }
     }
 }
 

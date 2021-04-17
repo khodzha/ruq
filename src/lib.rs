@@ -175,7 +175,9 @@ async fn poll(
     mqtt_stream.send(protocol::Packet::Connect(pkt)).await?;
 
     let pkt = mqtt_stream.next().await;
-    sender.send(Notification::ConnAck(format!("{:?}", pkt))).await;
+    sender
+        .send(Notification::ConnAck(format!("{:?}", pkt)))
+        .await;
 
     let mut ping = tokio::time::interval_at(
         Instant::now() + Duration::from_secs(8),
@@ -248,6 +250,9 @@ async fn poll(
                             mqtt_stream.send(protocol::Packet::Unsubscribe(pkt)).await;
                         }
                         Command::Disconnect => {
+                            let pkt = protocol::Disconnect::new();
+                            mqtt_stream.send(protocol::Packet::Disconnect(pkt)).await;
+                            return Ok(());
                         }
                     }
                     None => {}
@@ -255,8 +260,6 @@ async fn poll(
             }
         }
     }
-
-    Ok(())
 }
 
 pub enum Command {
@@ -283,9 +286,7 @@ impl Client {
 
         let address = address.to_owned();
         let address_ = address.clone();
-        let p = async move {
-            TcpStream::connect(address_).await
-        };
+        let p = async move { TcpStream::connect(address_).await };
 
         let evloop = EventLoop {
             address,
