@@ -10,8 +10,10 @@ pub use publish::Publish;
 pub use publish::QoS;
 pub use subscribe::Subscribe;
 pub use suback::Suback;
+pub use unsubscribe::Unsubscribe;
+pub use unsuback::Unsuback;
 
-use log::{debug, error, info};
+use log::{error, info};
 
 pub fn parse_pkt(data: &[u8]) -> Result<Option<Packet>, std::io::Error> {
     let pkt_type = parse_fixed_header(data[0]).map_err(|e| {
@@ -95,7 +97,53 @@ pub fn parse_pkt(data: &[u8]) -> Result<Option<Packet>, std::io::Error> {
             }
         },
         PacketType::SubscribeAck => match Suback::convert_from_mqtt(&data) {
-            Ok((pkt, _bytes_read)) => return Ok(Some(Packet::SubscribeAck(pkt))),
+            Ok((pkt, _bytes_read)) => return Ok(Some(Packet::SubAck(pkt))),
+            Err(ConvertError::NotEnoughBytes) => {
+                info!("Received publish but not enough bytes?");
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("parse_pkt expects that full pkt is present"),
+                ));
+            }
+            Err(e) => {
+                error!(
+                    "Something went wrong with parsing connack pkt, err = {:?}",
+                    e
+                );
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Something went wrong with parsing connack pkt, err = {:?}",
+                        e
+                    ),
+                ));
+            }
+        },
+        PacketType::SubscribeAck => match Suback::convert_from_mqtt(&data) {
+            Ok((pkt, _bytes_read)) => return Ok(Some(Packet::SubAck(pkt))),
+            Err(ConvertError::NotEnoughBytes) => {
+                info!("Received publish but not enough bytes?");
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("parse_pkt expects that full pkt is present"),
+                ));
+            }
+            Err(e) => {
+                error!(
+                    "Something went wrong with parsing connack pkt, err = {:?}",
+                    e
+                );
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Something went wrong with parsing connack pkt, err = {:?}",
+                        e
+                    ),
+                ));
+            }
+        },
+        PacketType::UnsubscribeAck => match Unsuback::convert_from_mqtt(&data) {
+            Ok((pkt, _bytes_read)) => return Ok(Some(Packet::UnsubAck(pkt))),
             Err(ConvertError::NotEnoughBytes) => {
                 info!("Received publish but not enough bytes?");
                 return Err(std::io::Error::new(
@@ -126,20 +174,20 @@ pub fn parse_pkt(data: &[u8]) -> Result<Option<Packet>, std::io::Error> {
 
 #[derive(Debug)]
 pub enum Packet {
-    Connect(connect::Connect),
-    Connack(connack::Connack),
-    Publish(publish::Publish),
-    PubAck(puback::Puback),
-    PingReq(pingreq::PingReq),
-    PingResp(pingresp::PingResp),
-    Subscribe(subscribe::Subscribe),
-    SubscribeAck(suback::Suback),
+    Connect(Connect),
+    Connack(Connack),
+    Publish(Publish),
+    PubAck(Puback),
+    PingReq(PingReq),
+    PingResp(PingResp),
+    Subscribe(Subscribe),
+    SubAck(Suback),
+    Unsubscribe(Unsubscribe),
+    UnsubAck(Unsuback),
     /* TODO:
     PubReceived,
     PubRelease,
     PubComplete,
-    Unsubscribe,
-    UnsubscribeAck,
     PingResponse,
     Disconnect,
     Auth,
@@ -153,6 +201,7 @@ impl ToMqttBytes for Packet {
             Self::Publish(p) => p.convert_to_mqtt(),
             Self::PingReq(p) => p.convert_to_mqtt(),
             Self::Subscribe(p) => p.convert_to_mqtt(),
+            Self::Unsubscribe(p) => p.convert_to_mqtt(),
             _ => unimplemented!(),
         }
     }
@@ -399,3 +448,5 @@ mod puback;
 mod publish;
 mod subscribe;
 mod suback;
+mod unsubscribe;
+mod unsuback;

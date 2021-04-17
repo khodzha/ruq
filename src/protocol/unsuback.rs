@@ -1,15 +1,15 @@
 use std::convert::{TryFrom, TryInto};
 
-use super::{ConvertError, FromMqttBytes, VBI};
+use super::{ConvertError, FromMqttBytes, ToMqttBytes, VBI};
 
 #[derive(Debug)]
-pub struct Suback {
-    properties: Vec<properties::SubackProperty>,
+pub struct Unsuback {
+    properties: Vec<properties::UnsubackProperty>,
     pktid: u16,
-    reason: SubackReason,
+    reason: UnsubackReason,
 }
 
-impl FromMqttBytes for Suback {
+impl FromMqttBytes for Unsuback {
     fn convert_from_mqtt(bytes: &[u8]) -> Result<(Self, usize), ConvertError> {
         // Skip packet type
         let mut bytes_read = 1;
@@ -37,10 +37,10 @@ impl FromMqttBytes for Suback {
         };
 
         let (properties, props_bytes_read) =
-            Vec::<properties::SubackProperty>::convert_from_mqtt(&bytes[bytes_read..])?;
+            Vec::<properties::UnsubackProperty>::convert_from_mqtt(&bytes[bytes_read..])?;
         bytes_read += props_bytes_read;
 
-        let reason: SubackReason = bytes[bytes_read].try_into()?;
+        let reason: UnsubackReason = bytes[bytes_read].try_into()?;
         bytes_read += 1;
 
         let suback = Self {
@@ -53,38 +53,28 @@ impl FromMqttBytes for Suback {
 }
 
 #[derive(Debug, Copy, Clone)]
-enum SubackReason {
-    QoS0,
-    QoS1,
-    QoS2,
+enum UnsubackReason {
+    Success,
+    NoSubscriptionExisted,
     UnspecifiedError,
     ImplementationSpecificError,
     NotAuthorized,
     TopicFilterInvalid,
     PacketIdentifierInUse,
-    QuotaExceeded,
-    SharedSubsNotSupported,
-    SubIdsNotSupported,
-    WildcardSubsNotSupported,
 }
 
-impl TryFrom<u8> for SubackReason {
+impl TryFrom<u8> for UnsubackReason {
     type Error = String;
 
     fn try_from(b: u8) -> Result<Self, Self::Error> {
         match b {
-            0 => Ok(Self::QoS0),
-            1 => Ok(Self::QoS1),
-            2 => Ok(Self::QoS2),
+            0 => Ok(Self::Success),
+            17 => Ok(Self::NoSubscriptionExisted),
             128 => Ok(Self::UnspecifiedError),
             131 => Ok(Self::ImplementationSpecificError),
             135 => Ok(Self::NotAuthorized),
             143 => Ok(Self::TopicFilterInvalid),
             145 => Ok(Self::PacketIdentifierInUse),
-            151 => Ok(Self::QuotaExceeded),
-            158 => Ok(Self::SharedSubsNotSupported),
-            161 => Ok(Self::SubIdsNotSupported),
-            162 => Ok(Self::WildcardSubsNotSupported),
             _ => Err(format!("Failed to parse SubackReason, byte = {}", b)),
         }
     }
@@ -92,15 +82,15 @@ impl TryFrom<u8> for SubackReason {
 
 mod properties {
     use super::super::{ConvertError, FromMqttBytes, ToMqttBytes, VBI};
-    use SubackProperty::*;
+    use UnsubackProperty::*;
 
     #[derive(Debug, Clone)]
-    pub enum SubackProperty {
+    pub enum UnsubackProperty {
         ReasonString(String),
         UserProperty(String, String),
     }
 
-    impl SubackProperty {
+    impl UnsubackProperty {
         fn id(&self) -> u8 {
             match self {
                 ReasonString(_) => 0x1F,
@@ -109,7 +99,7 @@ mod properties {
         }
     }
 
-    impl ToMqttBytes for SubackProperty {
+    impl ToMqttBytes for UnsubackProperty {
         fn convert_to_mqtt(&self) -> Vec<u8> {
             let first_byte: u8 = self.id();
             let mut buf: Vec<u8> = vec![first_byte];
@@ -127,7 +117,7 @@ mod properties {
         }
     }
 
-    impl FromMqttBytes for SubackProperty {
+    impl FromMqttBytes for UnsubackProperty {
         fn convert_from_mqtt(bytes: &[u8]) -> Result<(Self, usize), ConvertError> {
             match bytes.get(0) {
                 Some(0x1F) => {
@@ -148,7 +138,7 @@ mod properties {
         }
     }
 
-    impl ToMqttBytes for &[SubackProperty] {
+    impl ToMqttBytes for &[UnsubackProperty] {
         fn convert_to_mqtt(&self) -> Vec<u8> {
             let mut header = vec![];
             let mut buf: Vec<u8> = vec![];
@@ -163,7 +153,7 @@ mod properties {
         }
     }
 
-    impl FromMqttBytes for Vec<SubackProperty> {
+    impl FromMqttBytes for Vec<UnsubackProperty> {
         fn convert_from_mqtt(bytes: &[u8]) -> Result<(Self, usize), ConvertError> {
             let (bytelen, bytes_consumed) = VBI::convert_from_mqtt(&bytes)?;
             if bytelen.as_u32() == 0 {
@@ -173,7 +163,7 @@ mod properties {
                     &bytes[bytes_consumed..(bytes_consumed + bytelen.as_u32() as usize)];
                 let mut properties = vec![];
                 while bytes.len() > 0 {
-                    let (prop, bytes_read) = SubackProperty::convert_from_mqtt(bytes)?;
+                    let (prop, bytes_read) = UnsubackProperty::convert_from_mqtt(bytes)?;
                     properties.push(prop);
                     bytes = &bytes[bytes_read..];
                 }

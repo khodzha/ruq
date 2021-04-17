@@ -1,21 +1,18 @@
-use std::cell::RefCell;
 use std::io::Result as IOResult;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 
-use anyhow::{anyhow, Context as AnyContext, Error, Result as AResult};
+use anyhow::{anyhow, Context as AnyContext, Error};
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use futures::{Future, SinkExt, StreamExt};
 use pin_project::pin_project;
-use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::net::ToSocketAddrs;
-use tokio::time::{sleep, Duration, Instant};
+use tokio::time::{Duration, Instant};
 use tokio_util::codec::Framed;
 
-use crate::protocol::{ConvertError, FromMqttBytes, Packet, PacketType, Publish, ToMqttBytes};
+use log::info;
 
 pub use crate::protocol::QoS;
 
@@ -35,14 +32,17 @@ impl Future for MQTTFuture {
     }
 }
 
+#[derive(Clone)]
 pub struct Client {
     tx: Sender<Command>,
 }
 
 #[derive(Debug)]
 pub enum Notification {
-    Connack(String),
-    Message(String)
+    ConnAck(String),
+    SubAck(String),
+    Message(String),
+    UnsubAck(String),
 }
 
 #[pin_project(project = ELProj)]
@@ -175,12 +175,14 @@ async fn poll(
     mqtt_stream.send(protocol::Packet::Connect(pkt)).await?;
 
     let pkt = mqtt_stream.next().await;
-    sender.send(Notification::Connack(format!("{:?}", pkt)));
+    sender.send(Notification::ConnAck(format!("{:?}", pkt))).await;
 
     let mut ping = tokio::time::interval_at(
         Instant::now() + Duration::from_secs(8),
         Duration::from_secs(8),
     );
+
+    let mut pktid: u16 = 1;
 
     loop {
         let tick = ping.tick();
@@ -196,19 +198,57 @@ async fn poll(
                 mqtt_stream.send(protocol::Packet::PingReq(pkt)).await?;
             }
             req = &mut next_mqtt => {
-                eprintln!("Incoming req: {:?}", req);
-                sender.send(Notification::Message(format!("{:?}", pkt)));
+                info!("Incoming req: {:?}", req);
+                match req {
+                    Some(Ok(x)) => {
+                        match x {
+                            protocol::Packet::PingResp(_) => {
+                                // todo:
+                                // handle pingresp time reset
+                            }
+                            protocol::Packet::SubAck(m) => {
+                                sender.send(Notification::SubAck(format!("{:?}", m))).await;
+                            }
+                            protocol::Packet::UnsubAck(m) => {
+                                sender.send(Notification::UnsubAck(format!("{:?}", m))).await;
+                            }
+                            m => {
+                                sender.send(Notification::Message(format!("{:?}", m))).await;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
             },
             cmd = &mut next_cmd => {
                 match cmd {
                     Some(x) => match x {
-                        Command::Publish => {}
+                        Command::Publish(topic, payload, qos) => {
+                            let pkt = match qos {
+                                QoS::AtMostOnce => {
+                                    protocol::Publish::new(&topic, &payload, qos, None)
+                                }
+                                _ => {
+                                    let pkt = protocol::Publish::new(&topic, &payload, qos, Some(pktid));
+                                    pktid += 1;
+                                    pkt
+                                }
+                            };
+                            pktid += 1;
+                            mqtt_stream.send(protocol::Packet::Publish(pkt)).await;
+                        }
                         Command::Subscribe(topic, qos) => {
-                            let pkt = protocol::Subscribe::new(&topic, 1, qos);
+                            let pkt = protocol::Subscribe::new(&topic, pktid, qos);
+                            pktid += 1;
                             mqtt_stream.send(protocol::Packet::Subscribe(pkt)).await;
                         }
-                        Command::Unsubscribe => {}
-                        Command::Disconnect => {}
+                        Command::Unsubscribe(topics) => {
+                            let pkt = protocol::Unsubscribe::new(topics, pktid);
+                            pktid += 1;
+                            mqtt_stream.send(protocol::Packet::Unsubscribe(pkt)).await;
+                        }
+                        Command::Disconnect => {
+                        }
                     }
                     None => {}
                 }
@@ -220,9 +260,9 @@ async fn poll(
 }
 
 pub enum Command {
-    Publish,
+    Publish(String, String, QoS),
     Subscribe(String, QoS),
-    Unsubscribe,
+    Unsubscribe(Vec<String>),
     Disconnect,
 }
 
@@ -268,6 +308,24 @@ impl Client {
         self.tx
             .try_send(Command::Subscribe(topic, qos))
             .with_context(|| "Subscribe chan send failed")
+    }
+
+    pub fn publish(&mut self, topic: String, payload: String, qos: QoS) -> Result<(), Error> {
+        self.tx
+            .try_send(Command::Publish(topic, payload, qos))
+            .with_context(|| "Publish chan send failed")
+    }
+
+    pub fn unsubscribe(&mut self, topic: String) -> Result<(), Error> {
+        self.tx
+            .try_send(Command::Unsubscribe(vec![topic]))
+            .with_context(|| "Unsubscribe chan send failed")
+    }
+
+    pub fn disconnect(&mut self) -> Result<(), Error> {
+        self.tx
+            .try_send(Command::Disconnect)
+            .with_context(|| "Disconnect chan send failed")
     }
 }
 
