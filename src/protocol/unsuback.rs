@@ -1,6 +1,6 @@
 use std::convert::{TryFrom, TryInto};
 
-use super::{ConvertError, FromMqttBytes, ToMqttBytes, VBI};
+use super::{ConvertError, FromMqttBytes, VBI};
 
 #[derive(Debug)]
 pub struct Unsuback {

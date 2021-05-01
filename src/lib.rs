@@ -183,21 +183,26 @@ async fn poll(
         Instant::now() + Duration::from_secs(8),
         Duration::from_secs(8),
     );
+    let mut pingresp_received = None;
 
     let mut pktid: u16 = 1;
 
     loop {
-        let tick = ping.tick();
-        tokio::pin!(tick);
+        let ping_tick = ping.tick();
+        tokio::pin!(ping_tick);
         let next_mqtt = mqtt_stream.next();
         tokio::pin!(next_mqtt);
         let next_cmd = commands_rx.next();
         tokio::pin!(next_cmd);
 
         tokio::select! {
-            _ = &mut tick => {
+            _ = &mut ping_tick => {
+                if pingresp_received == Some(false) {
+                    return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "PingResp timed out"))
+                }
                 let pkt = protocol::PingReq::new();
                 mqtt_stream.send(protocol::Packet::PingReq(pkt)).await?;
+                pingresp_received = Some(false);
             }
             req = &mut next_mqtt => {
                 info!("Incoming req: {:?}", req);
@@ -205,8 +210,7 @@ async fn poll(
                     Some(Ok(x)) => {
                         match x {
                             protocol::Packet::PingResp(_) => {
-                                // todo:
-                                // handle pingresp time reset
+                                pingresp_received = Some(true);
                             }
                             protocol::Packet::SubAck(m) => {
                                 sender.send(Notification::SubAck(format!("{:?}", m))).await;
@@ -232,21 +236,20 @@ async fn poll(
                                 }
                                 _ => {
                                     let pkt = protocol::Publish::new(&topic, &payload, qos, Some(pktid));
-                                    pktid += 1;
+                                    pktid = pktid.wrapping_add(1);
                                     pkt
                                 }
                             };
-                            pktid += 1;
                             mqtt_stream.send(protocol::Packet::Publish(pkt)).await;
                         }
                         Command::Subscribe(topic, qos) => {
                             let pkt = protocol::Subscribe::new(&topic, pktid, qos);
-                            pktid += 1;
+                            pktid = pktid.wrapping_add(1);
                             mqtt_stream.send(protocol::Packet::Subscribe(pkt)).await;
                         }
                         Command::Unsubscribe(topics) => {
                             let pkt = protocol::Unsubscribe::new(topics, pktid);
-                            pktid += 1;
+                            pktid = pktid.wrapping_add(1);
                             mqtt_stream.send(protocol::Packet::Unsubscribe(pkt)).await;
                         }
                         Command::Disconnect => {

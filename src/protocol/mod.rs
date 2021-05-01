@@ -27,127 +27,50 @@ pub fn parse_pkt(data: &[u8]) -> Result<Option<Packet>, std::io::Error> {
         )
     })?;
 
-    match pkt_type {
-        PacketType::Publish => match Publish::convert_from_mqtt(&data) {
-            Ok((pkt, _bytes_read)) => return Ok(Some(Packet::Publish(pkt))),
-            Err(ConvertError::NotEnoughBytes) => {
-                info!("Received publish but not enough bytes?");
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("parse_pkt expects that full pkt is present"),
-                ));
-            }
-            Err(e) => {
-                error!(
-                    "Something went wrong with parsing publish pkt, err = {:?}",
-                    e
-                );
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!(
-                        "Something went wrong with parsing publish pkt, err = {:?}",
-                        e
-                    ),
-                ));
-            }
-        },
-        PacketType::Connack => match Connack::convert_from_mqtt(&data) {
-            Ok((pkt, _bytes_read)) => return Ok(Some(Packet::Connack(pkt))),
-            Err(ConvertError::NotEnoughBytes) => {
-                info!("Received publish but not enough bytes?");
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("parse_pkt expects that full pkt is present"),
-                ));
-            }
-            Err(e) => {
-                error!(
-                    "Something went wrong with parsing connack pkt, err = {:?}",
-                    e
-                );
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!(
-                        "Something went wrong with parsing connack pkt, err = {:?}",
-                        e
-                    ),
-                ));
-            }
-        },
-        PacketType::PingResponse => match PingResp::convert_from_mqtt(&data) {
-            Ok((pkt, _bytes_read)) => return Ok(Some(Packet::PingResp(pkt))),
-            Err(ConvertError::NotEnoughBytes) => {
-                info!("Received publish but not enough bytes?");
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("parse_pkt expects that full pkt is present"),
-                ));
-            }
-            Err(e) => {
-                error!(
-                    "Something went wrong with parsing connack pkt, err = {:?}",
-                    e
-                );
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!(
-                        "Something went wrong with parsing connack pkt, err = {:?}",
-                        e
-                    ),
-                ));
-            }
-        },
-        PacketType::SubscribeAck => match Suback::convert_from_mqtt(&data) {
-            Ok((pkt, _bytes_read)) => return Ok(Some(Packet::SubAck(pkt))),
-            Err(ConvertError::NotEnoughBytes) => {
-                info!("Received publish but not enough bytes?");
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("parse_pkt expects that full pkt is present"),
-                ));
-            }
-            Err(e) => {
-                error!(
-                    "Something went wrong with parsing connack pkt, err = {:?}",
-                    e
-                );
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!(
-                        "Something went wrong with parsing connack pkt, err = {:?}",
-                        e
-                    ),
-                ));
-            }
-        },
-        PacketType::UnsubscribeAck => match Unsuback::convert_from_mqtt(&data) {
-            Ok((pkt, _bytes_read)) => return Ok(Some(Packet::UnsubAck(pkt))),
-            Err(ConvertError::NotEnoughBytes) => {
-                info!("Received publish but not enough bytes?");
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("parse_pkt expects that full pkt is present"),
-                ));
-            }
-            Err(e) => {
-                error!(
-                    "Something went wrong with parsing connack pkt, err = {:?}",
-                    e
-                );
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!(
-                        "Something went wrong with parsing connack pkt, err = {:?}",
-                        e
-                    ),
-                ));
-            }
-        },
+    let pkt = match pkt_type {
+        PacketType::Publish => {
+            Publish::convert_from_mqtt(&data).map(|(pkt, _)| Some(Packet::Publish(pkt)))
+        }
+        PacketType::Connack => {
+            Connack::convert_from_mqtt(&data).map(|(pkt, _)| Some(Packet::Connack(pkt)))
+        }
+        PacketType::PingResponse => {
+            PingResp::convert_from_mqtt(&data).map(|(pkt, _)| Some(Packet::PingResp(pkt)))
+        }
+        PacketType::SubscribeAck => {
+            Suback::convert_from_mqtt(&data).map(|(pkt, _)| Some(Packet::SubAck(pkt)))
+        }
+        PacketType::UnsubscribeAck => {
+            Unsuback::convert_from_mqtt(&data).map(|(pkt, _)| Some(Packet::UnsubAck(pkt)))
+        }
         ty => {
             info!("Received msg type = {:?}", ty);
             unimplemented!("This is not impl");
         }
-    }
+    };
+
+    pkt.map_err(|e| match e {
+        ConvertError::NotEnoughBytes => {
+            info!("Received publish but not enough bytes?");
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("parse_pkt expects that full pkt is present"),
+            )
+        }
+        e => {
+            error!(
+                "Something went wrong with parsing publish pkt, err = {:?}",
+                e
+            );
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "Something went wrong with parsing publish pkt, err = {:?}",
+                    e
+                ),
+            )
+        }
+    })
 }
 
 #[derive(Debug)]
@@ -167,7 +90,6 @@ pub enum Packet {
     PubReceived,
     PubRelease,
     PubComplete,
-    PingResponse,
     Auth,
     */
 }

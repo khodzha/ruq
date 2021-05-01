@@ -55,6 +55,8 @@ async fn main() {
 
     println!("Hello world");
 
-    jh1.join();
-    jh2.join();
+    jh1.join().expect("JH1 erred");
+    jh2.join().expect("JH1 erred");
+
+    println!("Exiting");
 }

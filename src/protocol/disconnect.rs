@@ -1,4 +1,4 @@
-use super::{FromMqttBytes, ToMqttBytes, VBI};
+use super::{ToMqttBytes, VBI};
 use std::convert::TryFrom;
 
 #[derive(Debug)]
@@ -18,6 +18,10 @@ impl Disconnect {
     pub fn set_reason(&mut self, reason: DisconnectReason) -> &Self {
         self.reason = reason;
         self
+    }
+
+    pub fn set_property(&mut self, property: properties::DisconnectProperty) {
+        self.properties.push(property);
     }
 }
 
