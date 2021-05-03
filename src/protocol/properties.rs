@@ -1,16 +1,27 @@
-use super::{ConvertError, FromMqttBytes, ToMqttBytes, VBI};
+use std::convert::TryInto;
+
+use bytes::BufMut;
 use Property::*;
+
+use super::{ConvertError, FromMqttBytes, ToMqttBytes, VBI};
 
 #[derive(Debug, Clone)]
 pub enum Property {
+    PayloadFormatId(u8),
+    MessageExpiryInterval(u32),
+    //TopicAlias(u16),
     ResponseTopic(String),
     CorrelationData(Vec<u8>),
     UserProperty(String, String),
+    //SubscriptionIdentifier(VBI),
+    //ContentType(String),
 }
 
 impl Property {
     fn id(&self) -> u8 {
         match self {
+            PayloadFormatId(_) => 0x01,
+            MessageExpiryInterval(_) => 0x02,
             ResponseTopic(_) => 0x08,
             CorrelationData(_) => 0x09,
             UserProperty(_, _) => 0x26,
@@ -23,6 +34,10 @@ impl ToMqttBytes for Property {
         let first_byte: u8 = self.id();
         let mut buf: Vec<u8> = vec![first_byte];
         match self {
+            PayloadFormatId(v) => buf.put_u8(*v),
+            MessageExpiryInterval(v) => {
+                buf.put_u32(*v);
+            }
             ResponseTopic(s) => {
                 buf.extend_from_slice(&s.convert_to_mqtt());
             }
@@ -42,6 +57,19 @@ impl ToMqttBytes for Property {
 impl FromMqttBytes for Property {
     fn convert_from_mqtt(bytes: &[u8]) -> Result<(Self, usize), ConvertError> {
         match bytes.get(0) {
+            Some(0x01) => Ok((PayloadFormatId(bytes[1]), 2)),
+            Some(0x02) => {
+                let interval = bytes
+                    .get(1..5)
+                    .ok_or(ConvertError::NotEnoughBytes)
+                    .and_then(|slice| {
+                        slice.try_into().map_err(|e| {
+                            format!("Failed to convert to u32, reason = {:?}", e).into()
+                        })
+                    })
+                    .map(|slice| u32::from_be_bytes(slice))?;
+                Ok((MessageExpiryInterval(interval), 4))
+            }
             Some(0x08) => {
                 let (s, bytes_consumed) = String::convert_from_mqtt(&bytes[1..])?;
                 Ok((ResponseTopic(s), bytes_consumed + 1))

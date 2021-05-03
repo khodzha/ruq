@@ -1,38 +1,8 @@
-use super::properties::Property;
-use super::{ConvertError, FromMqttBytes, ToMqttBytes, VBI};
-
-#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
-#[repr(u8)]
-pub enum QoS {
-    AtMostOnce,
-    AtLeastOnce,
-    ExactlyOnce,
-}
-
-impl From<QoS> for u8 {
-    fn from(qos: QoS) -> u8 {
-        match qos {
-            QoS::AtMostOnce => 0,
-            QoS::AtLeastOnce => 1,
-            QoS::ExactlyOnce => 2,
-        }
-    }
-}
-
 use std::convert::{TryFrom, TryInto};
 
-impl TryFrom<u8> for QoS {
-    type Error = ConvertError;
-
-    fn try_from(u: u8) -> Result<Self, Self::Error> {
-        match u {
-            0 => Ok(QoS::AtMostOnce),
-            1 => Ok(QoS::AtLeastOnce),
-            2 => Ok(QoS::ExactlyOnce),
-            _ => Err(ConvertError::Other(format!("Invalid qos value: {}", u))),
-        }
-    }
-}
+use super::properties::Property;
+use super::QoS;
+use super::{ConvertError, FromMqttBytes, ToMqttBytes, VBI};
 
 #[derive(Copy, Clone, Debug)]
 pub struct PublishFlags {
@@ -85,18 +55,8 @@ pub struct Publish {
     pktid: Option<u16>,
 }
 
-impl Publish {
-    pub fn qos(&self) -> QoS {
-        self.flags.qos
-    }
-
-    pub fn pktid(&self) -> Option<u16> {
-        self.pktid
-    }
-}
-
 #[derive(Clone, Debug)]
-enum Payload {
+pub(crate) enum Payload {
     String(String),
     Bytes(Vec<u8>),
 }
@@ -123,32 +83,70 @@ impl ToMqttBytes for Payload {
 }
 
 impl Publish {
-    pub fn new(topic: &str, payload: &str, qos: QoS, pktid: Option<u16>) -> Self {
-        // TODO:
-        // in theory it should be impossible to call new() with qos=0 and pktid and vice versa
-        // with qos > 0 and no pktid
-        // but its not clear how to express that in types
-        if qos > QoS::AtMostOnce && pktid.is_none() {
-            panic!("QOS >0 and pktid is none")
-        };
+    pub(crate) fn at_most_once(
+        topic: String,
+        payload: Payload,
+        retain: bool,
+        properties: Vec<Property>,
+    ) -> Self {
+        Self::new(topic, payload, retain, properties, None, QoS::AtMostOnce)
+    }
 
+    pub(crate) fn at_least_once(
+        topic: String,
+        payload: Payload,
+        retain: bool,
+        properties: Vec<Property>,
+        pktid: u16,
+    ) -> Self {
+        Self::new(
+            topic,
+            payload,
+            retain,
+            properties,
+            Some(pktid),
+            QoS::AtLeastOnce,
+        )
+    }
+
+    pub(crate) fn exactly_once(
+        topic: String,
+        payload: Payload,
+        retain: bool,
+        properties: Vec<Property>,
+        pktid: u16,
+    ) -> Self {
+        Self::new(
+            topic,
+            payload,
+            retain,
+            properties,
+            Some(pktid),
+            QoS::ExactlyOnce,
+        )
+    }
+
+    fn new(
+        topic: String,
+        payload: Payload,
+        retain: bool,
+        properties: Vec<Property>,
+        pktid: Option<u16>,
+        qos: QoS,
+    ) -> Self {
         let flags = PublishFlags {
             qos,
-            retain: false,
+            retain,
             dup: false,
         };
 
         Self {
-            payload: payload.into(),
-            topic: topic.to_owned(),
-            properties: vec![],
+            payload,
+            topic,
+            properties,
             flags,
             pktid,
         }
-    }
-
-    pub fn add_property(&mut self, property: Property) {
-        self.properties.push(property);
     }
 }
 

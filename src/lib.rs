@@ -3,10 +3,11 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-use anyhow::{anyhow, Context as AnyContext, Error};
-use futures::channel::mpsc::{channel, Receiver, Sender};
+use anyhow::{anyhow, Error};
+use futures::channel::mpsc::{Receiver, Sender};
 use futures::{Future, SinkExt, StreamExt};
 use pin_project::pin_project;
+use protocol::publish::Payload;
 use tokio::net::TcpStream;
 use tokio::net::ToSocketAddrs;
 use tokio::time::{Duration, Instant};
@@ -14,6 +15,8 @@ use tokio_util::codec::Framed;
 
 use log::info;
 
+pub use crate::client::{Client, Notification, PublishBuilder};
+pub use crate::protocol::Property;
 pub use crate::protocol::QoS;
 
 pub trait TCPConnectFuture: Future<Output = IOResult<TcpStream>> + Send {}
@@ -30,19 +33,6 @@ impl Future for MQTTFuture {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         Pin::new(&mut self.as_mut().f).poll(cx)
     }
-}
-
-#[derive(Clone)]
-pub struct Client {
-    tx: Sender<Command>,
-}
-
-#[derive(Debug)]
-pub enum Notification {
-    ConnAck(String),
-    SubAck(String),
-    Message(String),
-    UnsubAck(String),
 }
 
 #[pin_project(project = ELProj)]
@@ -95,8 +85,7 @@ where
                             return Poll::Pending;
                         }
                         Poll::Ready(Ok(tcp_stream)) => {
-                            let mqtt_stream =
-                                Framed::new(tcp_stream, mqtt_stream::MqttCodec::new());
+                            let mqtt_stream = Framed::new(tcp_stream, mqtt_codec::MqttCodec::new());
 
                             let f = Box::pin(poll(
                                 mqtt_stream,
@@ -165,7 +154,7 @@ where
 }
 
 async fn poll(
-    mut mqtt_stream: Framed<TcpStream, mqtt_stream::MqttCodec>,
+    mut mqtt_stream: Framed<TcpStream, mqtt_codec::MqttCodec>,
     mut commands_rx: Receiver<Command>,
     mut sender: Sender<Notification>,
 ) -> IOResult<()> {
@@ -229,13 +218,18 @@ async fn poll(
             cmd = &mut next_cmd => {
                 match cmd {
                     Some(x) => match x {
-                        Command::Publish(topic, payload, qos) => {
+                        Command::Publish { topic, payload, properties, qos, retain } => {
                             let pkt = match qos {
                                 QoS::AtMostOnce => {
-                                    protocol::Publish::new(&topic, &payload, qos, None)
+                                    protocol::Publish::at_most_once(topic, payload, retain, properties)
                                 }
-                                _ => {
-                                    let pkt = protocol::Publish::new(&topic, &payload, qos, Some(pktid));
+                                QoS::AtLeastOnce => {
+                                    let pkt = protocol::Publish::at_least_once(topic, payload, retain, properties, pktid);
+                                    pktid = pktid.wrapping_add(1);
+                                    pkt
+                                }
+                                QoS::ExactlyOnce => {
+                                    let pkt = protocol::Publish::exactly_once(topic, payload, retain, properties, pktid);
                                     pktid = pktid.wrapping_add(1);
                                     pkt
                                 }
@@ -265,75 +259,21 @@ async fn poll(
     }
 }
 
-pub enum Command {
-    Publish(String, String, QoS),
+pub(crate) enum Command {
+    Publish {
+        topic: String,
+        payload: Payload,
+        properties: Vec<Property>,
+        qos: QoS,
+        retain: bool,
+    },
     Subscribe(String, QoS),
     Unsubscribe(Vec<String>),
     Disconnect,
 }
 
-impl Client {
-    pub fn new<A: ToOwned>(
-        address: A,
-    ) -> (
-        Self,
-        EventLoop<A::Owned, impl TCPConnectFuture>,
-        Receiver<Notification>,
-    )
-    where
-        A: ToOwned,
-        A::Owned: ToSocketAddrs + Clone + Send + 'static,
-    {
-        let (tx, rx) = channel(100);
-        let (notif_tx, notif_rx) = channel(100);
-
-        let address = address.to_owned();
-        let address_ = address.clone();
-        let p = async move { TcpStream::connect(address_).await };
-
-        let evloop = EventLoop {
-            address,
-            commands_rx: Some(rx),
-            notifications_tx: notif_tx,
-            state: EventLoopState::NotConnected { f: p },
-        };
-
-        (Self { tx }, evloop, notif_rx)
-    }
-
-    pub fn connect(&mut self) -> Result<(), Error> {
-        /*self.tx
-        .try_send(Command::Connect)
-        .with_context(|| "Connection failed")*/
-        Ok(())
-    }
-
-    pub fn subscribe(&mut self, topic: String, qos: QoS) -> Result<(), Error> {
-        self.tx
-            .try_send(Command::Subscribe(topic, qos))
-            .with_context(|| "Subscribe chan send failed")
-    }
-
-    pub fn publish(&mut self, topic: String, payload: String, qos: QoS) -> Result<(), Error> {
-        self.tx
-            .try_send(Command::Publish(topic, payload, qos))
-            .with_context(|| "Publish chan send failed")
-    }
-
-    pub fn unsubscribe(&mut self, topic: String) -> Result<(), Error> {
-        self.tx
-            .try_send(Command::Unsubscribe(vec![topic]))
-            .with_context(|| "Unsubscribe chan send failed")
-    }
-
-    pub fn disconnect(&mut self) -> Result<(), Error> {
-        self.tx
-            .try_send(Command::Disconnect)
-            .with_context(|| "Disconnect chan send failed")
-    }
-}
-
-mod mqtt_stream;
+mod client;
+mod mqtt_codec;
 mod protocol;
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 use futures::StreamExt;
 use log::warn;
-use ruq::{Client, QoS};
+use ruq::{Client, Property, PublishBuilder, QoS};
 use tokio::time::Duration;
 
 const TOPIC: &str = "topic/test";
@@ -19,7 +19,7 @@ async fn main() {
         handle.block_on(evloop)
     });
 
-    client.subscribe(TOPIC.into(), ruq::QoS::AtMostOnce);
+    client.subscribe(TOPIC, ruq::QoS::AtMostOnce);
 
     let mut client_ = client.clone();
 
@@ -31,7 +31,7 @@ async fn main() {
 
                 if let ruq::Notification::Message(_) = x {
                     disc = true;
-                    client_.unsubscribe(TOPIC.into());
+                    client_.unsubscribe(TOPIC);
                 }
 
                 if let ruq::Notification::UnsubAck(_) = x {
@@ -45,11 +45,16 @@ async fn main() {
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    client.publish(
-        "topic/test".into(),
-        "hello from 1.rs".into(),
-        QoS::AtMostOnce,
-    );
+    let msg = PublishBuilder::from_str("topic/test2", "{\"message\": \"hello from 1.rs\"}")
+        .qos(QoS::AtMostOnce)
+        .with_property(Property::UserProperty("type".into(), "event".into()))
+        .with_property(Property::UserProperty("method".into(), "foobar2".into()))
+        .with_property(Property::UserProperty(
+            "local_initial_timediff".into(),
+            "0".into(),
+        ));
+
+    client.publish(msg);
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
