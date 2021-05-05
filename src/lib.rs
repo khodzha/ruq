@@ -174,7 +174,7 @@ async fn poll(
     );
     let mut pingresp_received = None;
 
-    let mut pktid: u16 = 1;
+    let mut pktids = pktids::PktIds::new();
 
     loop {
         let ping_tick = ping.tick();
@@ -202,10 +202,15 @@ async fn poll(
                                 pingresp_received = Some(true);
                             }
                             protocol::Packet::SubAck(m) => {
+                                pktids.return_id(m.pktid());
                                 sender.send(Notification::SubAck(format!("{:?}", m))).await;
                             }
                             protocol::Packet::UnsubAck(m) => {
+                                pktids.return_id(m.pktid());
                                 sender.send(Notification::UnsubAck(format!("{:?}", m))).await;
+                            }
+                            protocol::Packet::PubAck(m) => {
+                                pktids.return_id(m.pktid());
                             }
                             m => {
                                 sender.send(Notification::Message(format!("{:?}", m))).await;
@@ -224,26 +229,32 @@ async fn poll(
                                     protocol::Publish::at_most_once(topic, payload, retain, properties)
                                 }
                                 QoS::AtLeastOnce => {
-                                    let pkt = protocol::Publish::at_least_once(topic, payload, retain, properties, pktid);
-                                    pktid = pktid.wrapping_add(1);
-                                    pkt
+                                    match pktids.next_id() {
+                                        Some(pktid) => protocol::Publish::at_least_once(topic, payload, retain, properties, pktid),
+                                        None => todo!(),
+                                    }
                                 }
                                 QoS::ExactlyOnce => {
-                                    let pkt = protocol::Publish::exactly_once(topic, payload, retain, properties, pktid);
-                                    pktid = pktid.wrapping_add(1);
-                                    pkt
+                                    match pktids.next_id() {
+                                        Some(pktid) => protocol::Publish::exactly_once(topic, payload, retain, properties, pktid),
+                                        None => todo!(),
+                                    }
                                 }
                             };
                             mqtt_stream.send(protocol::Packet::Publish(pkt)).await;
                         }
                         Command::Subscribe(topic, qos) => {
-                            let pkt = protocol::Subscribe::new(&topic, pktid, qos);
-                            pktid = pktid.wrapping_add(1);
+                            let pkt = match pktids.next_id() {
+                                Some(pktid) => protocol::Subscribe::new(&topic, pktid, qos),
+                                None => todo!(),
+                            };
                             mqtt_stream.send(protocol::Packet::Subscribe(pkt)).await;
                         }
                         Command::Unsubscribe(topics) => {
-                            let pkt = protocol::Unsubscribe::new(topics, pktid);
-                            pktid = pktid.wrapping_add(1);
+                            let pkt = match pktids.next_id() {
+                                Some(pktid) => protocol::Unsubscribe::new(topics, pktid),
+                                None => todo!(),
+                            };
                             mqtt_stream.send(protocol::Packet::Unsubscribe(pkt)).await;
                         }
                         Command::Disconnect => {
@@ -274,6 +285,7 @@ pub(crate) enum Command {
 
 mod client;
 mod mqtt_codec;
+mod pktids;
 mod protocol;
 
 #[cfg(test)]

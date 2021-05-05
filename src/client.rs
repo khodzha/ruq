@@ -82,6 +82,7 @@ impl Client {
     }
 }
 
+#[derive(Clone)]
 pub struct PublishBuilder {
     topic: String,
     payload: Payload,

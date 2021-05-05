@@ -46,7 +46,7 @@ async fn main() {
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     let msg = PublishBuilder::from_str("topic/test2", "{\"message\": \"hello from 1.rs\"}")
-        .qos(QoS::AtMostOnce)
+        .qos(QoS::AtLeastOnce)
         .with_property(Property::UserProperty("type".into(), "event".into()))
         .with_property(Property::UserProperty("method".into(), "foobar2".into()))
         .with_property(Property::UserProperty(
@@ -54,11 +54,18 @@ async fn main() {
             "0".into(),
         ));
 
-    client.publish(msg);
+    for _ in 0..300 {
+        client.publish(msg.clone());
+    }
+    // client.publish(msg.clone());
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     println!("Hello world");
+
+    for _ in 0..5 {
+        client.publish(msg.clone());
+    }
 
     jh1.join().expect("JH1 erred");
     jh2.join().expect("JH1 erred");

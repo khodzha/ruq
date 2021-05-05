@@ -10,12 +10,16 @@ pub struct Puback {
 }
 
 impl Puback {
-    pub fn new(pktid: u16) -> Self {
+    pub(crate) fn new(pktid: u16) -> Self {
         Self {
             pktid,
             reason: PubackReason::Success,
             properties: vec![],
         }
+    }
+
+    pub(crate) fn pktid(&self) -> u16 {
+        self.pktid
     }
 }
 
@@ -65,12 +69,21 @@ impl FromMqttBytes for Puback {
             pktid
         };
 
-        let reason: PubackReason = bytes[bytes_read].try_into()?;
-        bytes_read += 1;
+        let reason: PubackReason = if remaining_len.as_u32() == 2 {
+            0.try_into()?
+        } else {
+            bytes_read += 1;
+            bytes[bytes_read].try_into()?
+        };
 
-        let (properties, props_bytes_read) =
-            Vec::<properties::PubackProperty>::convert_from_mqtt(&bytes[bytes_read..])?;
-        bytes_read += props_bytes_read;
+        let properties = if remaining_len.as_u32() < 4 {
+            vec![]
+        } else {
+            let (properties, props_bytes_read) =
+                Vec::<properties::PubackProperty>::convert_from_mqtt(&bytes[bytes_read..])?;
+            bytes_read += props_bytes_read;
+            properties
+        };
 
         let puback = Self {
             properties,

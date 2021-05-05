@@ -9,6 +9,12 @@ pub struct Suback {
     reason: SubackReason,
 }
 
+impl Suback {
+    pub(crate) fn pktid(&self) -> u16 {
+        self.pktid
+    }
+}
+
 impl FromMqttBytes for Suback {
     fn convert_from_mqtt(bytes: &[u8]) -> Result<(Self, usize), ConvertError> {
         // Skip packet type
