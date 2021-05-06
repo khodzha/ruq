@@ -3,15 +3,16 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-use anyhow::{anyhow, Error};
+use anyhow::{anyhow, Result as AnyResult, Error as AnyError};
 use futures::channel::mpsc::{Receiver, Sender};
 use futures::{Future, SinkExt, StreamExt};
 use pin_project::pin_project;
 use protocol::publish::Payload;
 use tokio::net::TcpStream;
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::ToSocketAddrs;
 use tokio::time::{Duration, Instant};
-use tokio_util::codec::Framed;
+use tokio_util::codec::{FramedRead, FramedWrite};
 
 use log::info;
 
@@ -45,8 +46,6 @@ enum EventLoopState<F: TCPConnectFuture> {
         #[pin]
         f: MQTTFuture,
     },
-    GracefulShutdown,
-    AbruptDisconnect,
 }
 
 #[pin_project]
@@ -67,7 +66,7 @@ where
     A: ToSocketAddrs + Send,
     F: TCPConnectFuture,
 {
-    type Output = Result<(), Error>;
+    type Output = AnyResult<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut me = self.project();
@@ -85,10 +84,13 @@ where
                             return Poll::Pending;
                         }
                         Poll::Ready(Ok(tcp_stream)) => {
-                            let mqtt_stream = Framed::new(tcp_stream, mqtt_codec::MqttCodec::new());
+                            let (read_half, write_half) = tcp_stream.into_split();
+                            let mqtt_read = FramedRead::new(read_half, mqtt_codec::MqttCodec::new());
+                            let mqtt_write = FramedWrite::new(write_half, mqtt_codec::MqttCodec::new());
 
                             let f = Box::pin(poll(
-                                mqtt_stream,
+                                mqtt_read,
+                                mqtt_write,
                                 me.commands_rx.take().unwrap(),
                                 me.notifications_tx.clone(),
                             ));
@@ -139,12 +141,6 @@ where
                     ELProj::MqttConnected { f } => {
                         return f.poll(cx).map_err(|e| e.into());
                     }
-                    ELProj::AbruptDisconnect => {
-                        return Poll::Pending;
-                    }
-                    ELProj::GracefulShutdown => {
-                        return Poll::Pending;
-                    }
                 }
             };
 
@@ -154,16 +150,17 @@ where
 }
 
 async fn poll(
-    mut mqtt_stream: Framed<TcpStream, mqtt_codec::MqttCodec>,
+    mut mqtt_read: FramedRead<OwnedReadHalf, mqtt_codec::MqttCodec>,
+    mut mqtt_write: FramedWrite<OwnedWriteHalf, mqtt_codec::MqttCodec>,
     mut commands_rx: Receiver<Command>,
     mut sender: Sender<Notification>,
 ) -> IOResult<()> {
     let mut pkt = protocol::Connect::new("whatever.devops.svc.example.org");
     pkt.keep_alive(8);
 
-    mqtt_stream.send(protocol::Packet::Connect(pkt)).await?;
+    mqtt_write.send(protocol::Packet::Connect(pkt)).await?;
 
-    let pkt = mqtt_stream.next().await;
+    let pkt = mqtt_read.next().await;
     sender
         .send(Notification::ConnAck(format!("{:?}", pkt)))
         .await;
@@ -177,23 +174,16 @@ async fn poll(
     let mut pktids = pktids::PktIds::new();
 
     loop {
-        let ping_tick = ping.tick();
-        tokio::pin!(ping_tick);
-        let next_mqtt = mqtt_stream.next();
-        tokio::pin!(next_mqtt);
-        let next_cmd = commands_rx.next();
-        tokio::pin!(next_cmd);
-
         tokio::select! {
-            _ = &mut ping_tick => {
+            _ = ping.tick() => {
                 if pingresp_received == Some(false) {
                     return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "PingResp timed out"))
                 }
                 let pkt = protocol::PingReq::new();
-                mqtt_stream.send(protocol::Packet::PingReq(pkt)).await?;
+                mqtt_write.send(protocol::Packet::PingReq(pkt)).await?;
                 pingresp_received = Some(false);
             }
-            req = &mut next_mqtt => {
+            req = mqtt_read.next() => {
                 info!("Incoming req: {:?}", req);
                 match req {
                     Some(Ok(x)) => {
@@ -220,7 +210,7 @@ async fn poll(
                     _ => {}
                 }
             },
-            cmd = &mut next_cmd => {
+            cmd = commands_rx.next() => {
                 match cmd {
                     Some(x) => match x {
                         Command::Publish { topic, payload, properties, qos, retain } => {
@@ -241,25 +231,25 @@ async fn poll(
                                     }
                                 }
                             };
-                            mqtt_stream.send(protocol::Packet::Publish(pkt)).await;
+                            mqtt_write.send(protocol::Packet::Publish(pkt)).await;
                         }
                         Command::Subscribe(topic, qos) => {
                             let pkt = match pktids.next_id() {
                                 Some(pktid) => protocol::Subscribe::new(&topic, pktid, qos),
                                 None => todo!(),
                             };
-                            mqtt_stream.send(protocol::Packet::Subscribe(pkt)).await;
+                            mqtt_write.send(protocol::Packet::Subscribe(pkt)).await;
                         }
                         Command::Unsubscribe(topics) => {
                             let pkt = match pktids.next_id() {
                                 Some(pktid) => protocol::Unsubscribe::new(topics, pktid),
                                 None => todo!(),
                             };
-                            mqtt_stream.send(protocol::Packet::Unsubscribe(pkt)).await;
+                            mqtt_write.send(protocol::Packet::Unsubscribe(pkt)).await;
                         }
                         Command::Disconnect => {
                             let pkt = protocol::Disconnect::new();
-                            mqtt_stream.send(protocol::Packet::Disconnect(pkt)).await;
+                            mqtt_write.send(protocol::Packet::Disconnect(pkt)).await;
                             return Ok(());
                         }
                     }

@@ -54,8 +54,11 @@ async fn main() {
             "0".into(),
         ));
 
-    for _ in 0..300 {
-        client.publish(msg.clone());
+    for _ in 0..3000 {
+        let r = client.publish(msg.clone());
+        if r.is_err() {
+            eprintln!("r: {:?}", r);
+        }
     }
     // client.publish(msg.clone());
 
