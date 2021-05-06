@@ -3,18 +3,18 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-use anyhow::{anyhow, Result as AnyResult, Error as AnyError};
+use anyhow::{anyhow, Error as AnyError, Result as AnyResult};
 use futures::channel::mpsc::{Receiver, Sender};
 use futures::{Future, SinkExt, StreamExt};
 use pin_project::pin_project;
 use protocol::publish::Payload;
-use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::TcpStream;
 use tokio::net::ToSocketAddrs;
 use tokio::time::{Duration, Instant};
 use tokio_util::codec::{FramedRead, FramedWrite};
 
-use log::info;
+use log::{error, info};
 
 pub use crate::client::{Client, Notification, PublishBuilder};
 pub use crate::protocol::Property;
@@ -85,8 +85,10 @@ where
                         }
                         Poll::Ready(Ok(tcp_stream)) => {
                             let (read_half, write_half) = tcp_stream.into_split();
-                            let mqtt_read = FramedRead::new(read_half, mqtt_codec::MqttCodec::new());
-                            let mqtt_write = FramedWrite::new(write_half, mqtt_codec::MqttCodec::new());
+                            let mqtt_read =
+                                FramedRead::new(read_half, mqtt_codec::MqttCodec::new());
+                            let mqtt_write =
+                                FramedWrite::new(write_half, mqtt_codec::MqttCodec::new());
 
                             let f = Box::pin(poll(
                                 mqtt_read,
@@ -207,7 +209,14 @@ async fn poll(
                             }
                         }
                     }
-                    _ => {}
+                    Some(Err(e)) => {
+                        error!("Incoming req error: {:?}", e);
+                        return Err(e);
+                    }
+                    None => {
+                        // stream done
+                        return Ok(());
+                    }
                 }
             },
             cmd = commands_rx.next() => {

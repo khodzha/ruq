@@ -1,5 +1,5 @@
-use super::{ToMqttBytes, VBI};
-use std::convert::TryFrom;
+use super::{ConvertError, FromMqttBytes, ToMqttBytes, VBI};
+use std::convert::{TryFrom, TryInto};
 
 #[derive(Debug)]
 pub struct Disconnect {
@@ -149,6 +149,40 @@ impl ToMqttBytes for Disconnect {
         header.extend_from_slice(&buf);
 
         header
+    }
+}
+
+impl FromMqttBytes for Disconnect {
+    fn convert_from_mqtt(bytes: &[u8]) -> Result<(Self, usize), ConvertError> {
+        // Skip packet type
+        let mut bytes_read = 1;
+
+        let (remaining_len, vbi_bytes_read) = VBI::convert_from_mqtt(&bytes[bytes_read..])?;
+        bytes_read += vbi_bytes_read;
+
+        if bytes.len() < remaining_len.as_u32() as usize + bytes_read {
+            return Err(ConvertError::NotEnoughBytes);
+        }
+
+        let reason: DisconnectReason = if remaining_len.as_u32() == 0 {
+            DisconnectReason::Normal
+        } else {
+            let reason = bytes[bytes_read].try_into()?;
+            bytes_read += 1;
+            reason
+        };
+
+        let properties = if remaining_len.as_u32() < 4 {
+            vec![]
+        } else {
+            let (properties, props_bytes_read) =
+                Vec::<properties::DisconnectProperty>::convert_from_mqtt(&bytes[bytes_read..])?;
+            bytes_read += props_bytes_read;
+            properties
+        };
+
+        let disconnect = Self { properties, reason };
+        Ok((disconnect, bytes_read))
     }
 }
 

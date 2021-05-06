@@ -46,6 +46,9 @@ pub fn parse_pkt(data: &[u8]) -> Result<Option<Packet>, std::io::Error> {
         PacketType::PubAck => {
             Puback::convert_from_mqtt(&data).map(|(pkt, _)| Some(Packet::PubAck(pkt)))
         }
+        PacketType::Disconnect => {
+            Disconnect::convert_from_mqtt(&data).map(|(pkt, _)| Some(Packet::Disconnect(pkt)))
+        }
         ty => {
             info!("Received msg type = {:?}", ty);
             unimplemented!("This is not impl");

@@ -72,8 +72,9 @@ impl FromMqttBytes for Puback {
         let reason: PubackReason = if remaining_len.as_u32() == 2 {
             0.try_into()?
         } else {
+            let reason = bytes[bytes_read].try_into()?;
             bytes_read += 1;
-            bytes[bytes_read].try_into()?
+            reason
         };
 
         let properties = if remaining_len.as_u32() < 4 {
