@@ -23,7 +23,7 @@ impl FromMqttBytes for Unsuback {
         let (remaining_len, vbi_bytes_read) = VBI::convert_from_mqtt(&bytes[bytes_read..])?;
         bytes_read += vbi_bytes_read;
 
-        if bytes.len() < remaining_len.as_u32() as usize + bytes_read {
+        if bytes.len() < remaining_len + bytes_read {
             return Err(ConvertError::NotEnoughBytes);
         }
 
@@ -162,11 +162,11 @@ mod properties {
     impl FromMqttBytes for Vec<UnsubackProperty> {
         fn convert_from_mqtt(bytes: &[u8]) -> Result<(Self, usize), ConvertError> {
             let (bytelen, bytes_consumed) = VBI::convert_from_mqtt(&bytes)?;
-            if bytelen.as_u32() == 0 {
+            if bytelen == 0 {
                 Ok((vec![], bytes_consumed))
             } else {
                 let mut bytes =
-                    &bytes[bytes_consumed..(bytes_consumed + bytelen.as_u32() as usize)];
+                    &bytes[bytes_consumed..(bytes_consumed + bytelen)];
                 let mut properties = vec![];
                 while bytes.len() > 0 {
                     let (prop, bytes_read) = UnsubackProperty::convert_from_mqtt(bytes)?;
@@ -174,7 +174,7 @@ mod properties {
                     bytes = &bytes[bytes_read..];
                 }
 
-                Ok((properties, bytes_consumed + bytelen.as_u32() as usize))
+                Ok((properties, bytes_consumed + bytelen))
             }
         }
     }

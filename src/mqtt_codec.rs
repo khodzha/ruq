@@ -15,8 +15,7 @@ impl MqttCodec {
 // Packet size is 1 byte for fixed header + len of VBI (at most 4 bytes) + value of VBI for remaining len
 // And the maximum value of VBI is 268_435_455
 // https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901011
-// So maximum packet len is 268_435_455 + 4 + 1
-const MAX: usize = 268_435_460;
+const MAX: u32 = 268_435_455;
 
 impl Decoder for MqttCodec {
     type Item = protocol::Packet;
@@ -37,16 +36,19 @@ impl Decoder for MqttCodec {
 
         match protocol::VBI::convert_from_mqtt(&src[1..]) {
             Ok((len, vbi_len)) => {
-                let total_pkt_len = 1 + vbi_len + len.as_u32() as usize;
+                if len > MAX {
+                    return Err(Self::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Packet len exceeds maximum: {} larger than {}", len, MAX),
+                    ));
+                }
+                let total_pkt_len = 1 + vbi_len + len;
                 if src.len() < total_pkt_len {
                     return Ok(None);
                 } else {
-                    // Use advance to modify src such that it no longer contains
-                    // this frame.
                     let data = src[0..total_pkt_len].to_vec();
                     src.advance(total_pkt_len);
 
-                    // Convert the data to a string, or fail if it is not valid utf-8.
                     protocol::parse_pkt(&data)
                 }
             }

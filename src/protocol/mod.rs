@@ -169,14 +169,8 @@ impl TryFrom<u8> for PacketType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct VBI(u32);
-
-impl VBI {
-    pub fn as_u32(&self) -> u32 {
-        self.0
-    }
-}
 
 impl From<u32> for VBI {
     fn from(val: u32) -> Self {
@@ -187,6 +181,68 @@ impl From<u32> for VBI {
 impl From<VBI> for u32 {
     fn from(vbi: VBI) -> Self {
         vbi.0
+    }
+}
+
+impl PartialEq<u32> for VBI {
+    fn eq(&self, other: &u32) -> bool {
+        self.0 == *other
+    }
+}
+
+impl std::cmp::PartialOrd<u32> for VBI {
+    fn partial_cmp(&self, other: &u32) -> Option<std::cmp::Ordering> {
+        Some(self.0.cmp(other))
+    }
+}
+
+impl std::cmp::PartialEq<VBI> for u32 {
+    fn eq(&self, other: &VBI) -> bool {
+        *self == other.0
+    }
+}
+
+impl std::cmp::PartialOrd<VBI> for u32 {
+    fn partial_cmp(&self, other: &VBI) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(&other.0))
+    }
+}
+
+impl std::fmt::Display for VBI {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::ops::Add<usize> for VBI {
+    type Output = usize;
+
+    fn add(self, other: usize) -> Self::Output {
+        other + self.0 as usize
+    }
+}
+
+impl std::ops::Add<VBI> for usize {
+    type Output = usize;
+
+    fn add(self, other: VBI) -> Self::Output {
+        self + other.0 as usize
+    }
+}
+
+impl std::ops::Sub<usize> for VBI {
+    type Output = usize;
+
+    fn sub(self, other: usize) -> Self::Output {
+        self.0 as usize - other
+    }
+}
+
+impl std::ops::Sub<VBI> for usize {
+    type Output = usize;
+
+    fn sub(self, other: VBI) -> Self::Output {
+        self - other.0 as usize
     }
 }
 

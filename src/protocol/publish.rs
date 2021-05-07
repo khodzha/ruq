@@ -191,7 +191,7 @@ impl FromMqttBytes for Publish {
 
         let mut variable_header_len = 0;
 
-        if bytes.len() < remaining_len.as_u32() as usize + vbi_bytes_read + 1 {
+        if bytes.len() < remaining_len + vbi_bytes_read + 1 {
             return Err(ConvertError::NotEnoughBytes);
         }
 
@@ -225,7 +225,7 @@ impl FromMqttBytes for Publish {
         bytes_read += props_bytes_read;
         variable_header_len += props_bytes_read;
 
-        let payload_len = remaining_len.as_u32() as usize - variable_header_len;
+        let payload_len = remaining_len - variable_header_len;
         let payload: Payload =
             match std::str::from_utf8(&bytes[bytes_read..bytes_read + payload_len]) {
                 Ok(s) => s.into(),
