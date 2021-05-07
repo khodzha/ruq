@@ -104,44 +104,6 @@ where
                             }
                         }
                     },
-                    /*ELProj::Connected { mqtt_stream, state } => {
-                        match state {
-                            MqttConnectState::Connect(connect) => match connect.as_mut().poll(cx) {
-                                Poll::Pending => {
-                                    return Poll::Pending;
-                                }
-                                Poll::Ready(Err(e)) => {
-                                    return Poll::Ready(Err(e.into()));
-                                }
-                                Poll::Ready(Ok(())) => {
-                                    let mqtt_stream_ = mqtt_stream.clone();
-                                    let f = Box::pin(async move {
-                                        mqtt_stream_.borrow_mut().next().await
-                                    });
-                                    EventLoopState::Connected { mqtt_stream: mqtt_stream.clone(), state: MqttConnectState::Connack(f) }
-                                }
-                            },
-                            MqttConnectState::Connack(connack) => match connack.as_mut().poll(cx) {
-                                Poll::Pending => {
-                                    return Poll::Pending;
-                                }
-                                Poll::Ready(None) => {
-                                    return Poll::Ready(Err(anyhow!("Stream done")));
-                                }
-                                Poll::Ready(Some(Err(e))) => {
-                                    return Poll::Ready(Err(e.into()));
-                                },
-                                Poll::Ready(Some(Ok(pkt))) => {
-                                    eprintln!("Received connack: {:?}", pkt);
-                                    let ping = sleep(Duration::from_secs(8));
-                                    EventLoopState::MqttConnected {
-                                        mqtt_stream: mqtt_stream.clone(),
-                                        next_ping: ping,
-                                    }
-                                }
-                            }
-                        }
-                    }*/
                     ELProj::MqttConnected { f } => {
                         return f.poll(cx).map_err(|e| e.into());
                     }
