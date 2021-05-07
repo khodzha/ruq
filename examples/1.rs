@@ -54,7 +54,7 @@ async fn main() {
             "0".into(),
         ));
 
-    for _ in 0..3000 {
+    for _ in 0..300 {
         let r = client.publish(msg.clone());
         if r.is_err() {
             eprintln!("r: {:?}", r);

@@ -23,9 +23,13 @@ impl Disconnect {
     pub fn set_property(&mut self, property: properties::DisconnectProperty) {
         self.properties.push(property);
     }
+
+    pub fn reason(&self) -> DisconnectReason {
+        self.reason
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum DisconnectReason {
     Normal,
     DisconnectWithWill,

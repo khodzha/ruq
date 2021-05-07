@@ -1,4 +1,4 @@
-use std::io::Result as IOResult;
+use std::io::{Error as IOError, ErrorKind, Result as IOResult};
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
@@ -15,6 +15,8 @@ use tokio::time::{Duration, Instant};
 use tokio_util::codec::{FramedRead, FramedWrite};
 
 use log::{error, info};
+
+use crate::protocol::DisconnectReason;
 
 pub use crate::client::{Client, Notification, PublishBuilder};
 pub use crate::protocol::Property;
@@ -163,9 +165,17 @@ async fn poll(
     mqtt_write.send(protocol::Packet::Connect(pkt)).await?;
 
     let pkt = mqtt_read.next().await;
-    sender
+    // TODO: pkt must be a connack with ConnackReason::Success
+    match sender
         .send(Notification::ConnAck(format!("{:?}", pkt)))
-        .await;
+        .await
+    {
+        Ok(()) => {}
+        Err(e) => {
+            // TODO: if we failed to send notification to client code, what should we do here and below?
+            // probably send disconnect without acking any incoming messages?
+        }
+    }
 
     let mut ping = tokio::time::interval_at(
         Instant::now() + Duration::from_secs(8),
@@ -179,7 +189,7 @@ async fn poll(
         tokio::select! {
             _ = ping.tick() => {
                 if pingresp_received == Some(false) {
-                    return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "PingResp timed out"))
+                    return Err(IOError::new(ErrorKind::TimedOut, "PingResp timed out"))
                 }
                 let pkt = protocol::PingReq::new();
                 mqtt_write.send(protocol::Packet::PingReq(pkt)).await?;
@@ -190,6 +200,16 @@ async fn poll(
                 match req {
                     Some(Ok(x)) => {
                         match x {
+                            protocol::Packet::Disconnect(disconnect) => {
+                                info!("Got disconnect packet from server: {:?}", disconnect);
+                                return match disconnect.reason() {
+                                    DisconnectReason::Normal => Ok(()),
+                                    reason => {
+                                        let e = format!("Disconnected due to: {:?}", reason);
+                                        Err(IOError::new(ErrorKind::Other, e))
+                                    },
+                                }
+                            },
                             protocol::Packet::PingResp(_) => {
                                 pingresp_received = Some(true);
                             }

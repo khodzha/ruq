@@ -2,7 +2,7 @@ use std::convert::{TryFrom, TryInto};
 
 pub use connack::Connack;
 pub use connect::Connect;
-pub use disconnect::Disconnect;
+pub use disconnect::{Disconnect, DisconnectReason};
 pub use pingreq::PingReq;
 pub use pingresp::PingResp;
 pub use properties::Property;
