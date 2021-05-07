@@ -4,7 +4,7 @@ use super::{ConvertError, FromMqttBytes, ToMqttBytes, VBI};
 
 #[derive(Debug)]
 pub struct Puback {
-    properties: Vec<properties::PubackProperty>,
+    properties: properties::PubackProperties,
     pktid: u16,
     reason: PubackReason,
 }
@@ -14,7 +14,7 @@ impl Puback {
         Self {
             pktid,
             reason: PubackReason::Success,
-            properties: vec![],
+            properties: Default::default(),
         }
     }
 
@@ -32,7 +32,7 @@ impl ToMqttBytes for Puback {
         buf.extend_from_slice(&self.pktid.to_be_bytes());
         buf.push(self.reason.into());
 
-        buf.extend_from_slice(&self.properties.as_slice().convert_to_mqtt());
+        buf.extend_from_slice(&self.properties.convert_to_mqtt());
 
         let len_vbi = VBI(buf.len() as u32).convert_to_mqtt();
         header.extend_from_slice(&len_vbi);
@@ -78,10 +78,10 @@ impl FromMqttBytes for Puback {
         };
 
         let properties = if remaining_len < 4 {
-            vec![]
+            Default::default()
         } else {
             let (properties, props_bytes_read) =
-                Vec::<properties::PubackProperty>::convert_from_mqtt(&bytes[bytes_read..])?;
+                properties::PubackProperties::convert_from_mqtt(&bytes[bytes_read..])?;
             bytes_read += props_bytes_read;
             properties
         };
@@ -145,94 +145,105 @@ impl From<PubackReason> for u8 {
 
 mod properties {
     use super::super::{ConvertError, FromMqttBytes, ToMqttBytes, VBI};
-    use PubackProperty::*;
 
-    #[derive(Debug, Clone)]
-    pub enum PubackProperty {
-        ReasonString(String),
-        UserProperty(String, String),
+    #[derive(Debug, Clone, Default)]
+    pub struct PubackProperties {
+        reason_string: Option<String>,
+        user_properties: Vec<(String, String)>,
     }
 
-    impl PubackProperty {
-        fn id(&self) -> u8 {
-            match self {
-                ReasonString(_) => 0x1F,
-                UserProperty(_, _) => 0x26,
-            }
-        }
-    }
-
-    impl ToMqttBytes for PubackProperty {
+    impl ToMqttBytes for PubackProperties {
         fn convert_to_mqtt(&self) -> Vec<u8> {
-            let first_byte: u8 = self.id();
-            let mut buf: Vec<u8> = vec![first_byte];
-            match self {
-                ReasonString(s) => {
-                    buf.extend_from_slice(&s.convert_to_mqtt());
-                }
-                UserProperty(k, v) => {
-                    buf.extend_from_slice(&k.convert_to_mqtt());
-                    buf.extend_from_slice(&v.convert_to_mqtt());
-                }
+            let mut buf: Vec<u8> = vec![];
+            if let Some(s) = &self.reason_string {
+                buf.push(0x1F);
+                buf.extend_from_slice(&s.convert_to_mqtt());
+            }
+
+            if self.user_properties.len() > 0 {
+                buf.push(0x26);
+            }
+            for (k, v) in &self.user_properties {
+                buf.extend_from_slice(&k.convert_to_mqtt());
+                buf.extend_from_slice(&v.convert_to_mqtt());
             }
 
             buf
         }
     }
 
-    impl FromMqttBytes for PubackProperty {
-        fn convert_from_mqtt(bytes: &[u8]) -> Result<(Self, usize), ConvertError> {
-            match bytes.get(0) {
-                Some(0x1F) => {
-                    let (s, bytes_consumed) = String::convert_from_mqtt(&bytes[1..])?;
-                    Ok((ReasonString(s), bytes_consumed + 1))
-                }
-                Some(0x26) => {
-                    let (k, bc1) = String::convert_from_mqtt(&bytes[1..])?;
-                    let (v, bc2) = String::convert_from_mqtt(&bytes[(bc1 + 1)..])?;
-                    Ok((UserProperty(k, v), bc1 + bc2 + 1))
-                }
-                Some(k) => Err(ConvertError::Other(format!(
-                    "Property {:#x?} not implemented",
-                    k
-                ))),
-                None => Err(ConvertError::NotEnoughBytes),
-            }
-        }
-    }
-
-    impl ToMqttBytes for &[PubackProperty] {
-        fn convert_to_mqtt(&self) -> Vec<u8> {
-            let mut header = vec![];
-            let mut buf: Vec<u8> = vec![];
-
-            self.iter()
-                .for_each(|prop| buf.extend_from_slice(&prop.convert_to_mqtt()));
-
-            let len: VBI = (buf.len() as u32).into();
-            header.extend_from_slice(&len.convert_to_mqtt());
-            header.extend_from_slice(&buf);
-            header
-        }
-    }
-
-    impl FromMqttBytes for Vec<PubackProperty> {
+    impl FromMqttBytes for PubackProperties {
         fn convert_from_mqtt(bytes: &[u8]) -> Result<(Self, usize), ConvertError> {
             let (bytelen, bytes_consumed) = VBI::convert_from_mqtt(&bytes)?;
             if bytelen == 0 {
-                Ok((vec![], bytes_consumed))
+                Ok((Default::default(), bytes_consumed))
             } else {
-                let mut bytes =
-                    &bytes[bytes_consumed..(bytes_consumed + bytelen)];
-                let mut properties = vec![];
-                while bytes.len() > 0 {
-                    let (prop, bytes_read) = PubackProperty::convert_from_mqtt(bytes)?;
-                    properties.push(prop);
-                    bytes = &bytes[bytes_read..];
+                let mut bytes = bytes.get(bytes_consumed..(bytes_consumed + bytelen));
+
+                let mut properties: PubackProperties = Default::default();
+
+                while let Some(slice) = bytes {
+                    let bytes_read = match slice.get(0) {
+                        Some(0x1F) => {
+                            let (s, property_bytes_read) = String::convert_from_mqtt(&slice[1..])?;
+                            properties.reason_string = Some(s);
+                            property_bytes_read + 1
+                        }
+                        Some(0x26) => {
+                            let (k, pbr1) = String::convert_from_mqtt(&slice[1..])?;
+                            let (v, pbr2) = String::convert_from_mqtt(&slice[(pbr1 + 1)..])?;
+                            properties.user_properties.push((k, v));
+                            pbr1 + pbr2 + 1
+                        }
+                        Some(k) => {
+                            return Err(ConvertError::Other(format!(
+                                "Property {:#x?} not implemented",
+                                k
+                            )));
+                        }
+                        None => {
+                            return Err(ConvertError::NotEnoughBytes);
+                        }
+                    };
+                    bytes = slice.get((bytes_read + 1)..);
                 }
 
                 Ok((properties, bytes_consumed + bytelen))
             }
         }
+    }
+
+    #[test]
+    fn empty_puback_props() {
+        let (props, _) = PubackProperties::convert_from_mqtt(&[0]).unwrap();
+        assert!(props.reason_string.is_none());
+        assert!(props.user_properties.len() == 0);
+    }
+
+    #[test]
+    fn some_reason_string() {
+        let bytes = [9, 0x1F, 0, 6, b'f', b'o', b'o', b'b', b'a', b'r'];
+        let (props, _) = PubackProperties::convert_from_mqtt(&bytes).unwrap();
+        assert!(props.reason_string.unwrap() == "foobar");
+        assert!(props.user_properties.len() == 0);
+    }
+
+    #[test]
+    fn malformed_reason_string() {
+        let bytes = [9, 0x1F, 6, 0, b'f', b'o', b'o', b'b', b'a', b'r'];
+        let (props, _) = PubackProperties::convert_from_mqtt(&bytes).unwrap();
+        assert!(props.reason_string.unwrap() == "foobar");
+        assert!(props.user_properties.len() == 0);
+    }
+
+    #[test]
+    fn some_user_props_string() {
+        let bytes = [
+            12, 0x26, 0, 3, b'f', b'o', b'o', 0, 4, b'b', b'a', b'r', b'k',
+        ];
+        let (props, _) = PubackProperties::convert_from_mqtt(&bytes).unwrap();
+        assert!(props.reason_string.is_none());
+        assert!(props.user_properties.len() == 1);
+        assert!(props.user_properties[0] == ("foo".into(), "bark".into()));
     }
 }

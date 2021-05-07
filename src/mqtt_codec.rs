@@ -30,7 +30,10 @@ impl Decoder for MqttCodec {
         protocol::parse_fixed_header(src[0]).map_err(|e| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Byte {:?} is not a proper packet header.", src[0]),
+                format!(
+                    "Byte {:?} is not a proper packet header, err = {:?}",
+                    src[0], e
+                ),
             )
         })?;
 
@@ -46,10 +49,10 @@ impl Decoder for MqttCodec {
                 if src.len() < total_pkt_len {
                     return Ok(None);
                 } else {
-                    let data = src[0..total_pkt_len].to_vec();
+                    let data = &src[0..total_pkt_len];
+                    let pkt = protocol::parse_pkt(&data);
                     src.advance(total_pkt_len);
-
-                    protocol::parse_pkt(&data)
+                    pkt
                 }
             }
             Err(protocol::ConvertError::NotEnoughBytes) => {

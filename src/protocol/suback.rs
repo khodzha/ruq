@@ -175,8 +175,7 @@ mod properties {
             if bytelen == 0 {
                 Ok((vec![], bytes_consumed))
             } else {
-                let mut bytes =
-                    &bytes[bytes_consumed..(bytes_consumed + bytelen)];
+                let mut bytes = &bytes[bytes_consumed..(bytes_consumed + bytelen)];
                 let mut properties = vec![];
                 while bytes.len() > 0 {
                     let (prop, bytes_read) = SubackProperty::convert_from_mqtt(bytes)?;
