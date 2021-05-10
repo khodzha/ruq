@@ -285,8 +285,16 @@ mod protocol;
 
 #[cfg(test)]
 mod tests {
+    use crate::protocol::FromMqttBytes;
+
     #[test]
     fn it_works() {
         assert_eq!(2 + 2, 4);
+    }
+
+    #[test]
+    fn parse_invalid_string() {
+        let bytes = [6, 0, b'f', b'o', b'o', b'b', b'a', b'r'];
+        assert!(String::convert_from_mqtt(&bytes).is_err());
     }
 }

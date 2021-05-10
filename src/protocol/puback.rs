@@ -219,9 +219,7 @@ mod properties {
     #[test]
     fn malformed_reason_string() {
         let bytes = [9, 0x1F, 6, 0, b'f', b'o', b'o', b'b', b'a', b'r'];
-        let (props, _) = PubackProperties::convert_from_mqtt(&bytes).unwrap();
-        assert!(props.reason_string.unwrap() == "foobar");
-        assert!(props.user_properties.len() == 0);
+        assert!(PubackProperties::convert_from_mqtt(&bytes).is_err());
     }
 
     #[test]

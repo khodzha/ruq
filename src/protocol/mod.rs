@@ -379,13 +379,16 @@ impl FromMqttBytes for String {
                     .map_err(|e| format!("Failed to convert to u16, reason = {:?}", e).into())
             })
             .map(|slice| u16::from_be_bytes(slice))? as usize;
-        if len > 0 {
+
+        if len > 0 && len + 2 <= bytes.len() {
             let s = std::str::from_utf8(&bytes[2..(2 + len)])
                 .map_err(|e| format!("Failed to parse bytes as utf8, reason = {:?}", e))?;
 
             Ok((s.into(), len + 2))
-        } else {
+        } else if len == 0 {
             Ok(("".into(), 2))
+        } else {
+            Err(ConvertError::NotEnoughBytes)
         }
     }
 }
