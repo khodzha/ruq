@@ -1,16 +1,16 @@
 use std::convert::{TryFrom, TryInto};
 
-use super::{ConvertError, FromMqttBytes, ToMqttBytes, VBI};
+use super::{ConvertError, FromMqttBytes, PktId, ToMqttBytes, VBI};
 
 #[derive(Debug)]
 pub struct Puback {
     properties: properties::PubackProperties,
-    pktid: u16,
+    pktid: PktId,
     reason: PubackReason,
 }
 
 impl Puback {
-    pub(crate) fn new(pktid: u16) -> Self {
+    pub(crate) fn new(pktid: PktId) -> Self {
         Self {
             pktid,
             reason: PubackReason::Success,
@@ -18,7 +18,7 @@ impl Puback {
         }
     }
 
-    pub(crate) fn pktid(&self) -> u16 {
+    pub(crate) fn pktid(&self) -> PktId {
         self.pktid
     }
 }
@@ -29,7 +29,7 @@ impl ToMqttBytes for Puback {
         let mut header: Vec<u8> = vec![first_byte];
         let mut buf = vec![];
 
-        buf.extend_from_slice(&self.pktid.to_be_bytes());
+        buf.extend_from_slice(&self.pktid.get().to_be_bytes());
         buf.push(self.reason.into());
 
         buf.extend_from_slice(&self.properties.convert_to_mqtt());
@@ -54,20 +54,8 @@ impl FromMqttBytes for Puback {
             return Err(ConvertError::NotEnoughBytes);
         }
 
-        let pktid = {
-            let pktid = bytes[bytes_read..]
-                .get(0..2)
-                .ok_or(ConvertError::NotEnoughBytes)
-                .and_then(|slice| {
-                    slice
-                        .try_into()
-                        .map_err(|e| format!("Failed to convert to u16, reason = {:?}", e).into())
-                })
-                .map(|slice| u16::from_be_bytes(slice))?;
-
-            bytes_read += 2;
-            pktid
-        };
+        let (pktid, pktid_bytes_read) = PktId::convert_from_mqtt(&bytes[bytes_read..])?;
+        bytes_read += pktid_bytes_read;
 
         let reason: PubackReason = if remaining_len == 2 {
             0.try_into()?

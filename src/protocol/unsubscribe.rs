@@ -1,13 +1,13 @@
-use super::{ToMqttBytes, VBI};
+use super::{PktId, ToMqttBytes, VBI};
 
 #[derive(Debug)]
 pub struct Unsubscribe {
     topics: Vec<String>,
-    pktid: u16,
+    pktid: PktId,
 }
 
 impl Unsubscribe {
-    pub fn new(topics: Vec<String>, pktid: u16) -> Self {
+    pub fn new(topics: Vec<String>, pktid: PktId) -> Self {
         Self { topics, pktid }
     }
 }
@@ -17,7 +17,7 @@ impl ToMqttBytes for Unsubscribe {
         let mut header: Vec<u8> = vec![0b1010_0010];
         let mut buf = vec![];
 
-        buf.extend_from_slice(&self.pktid.to_be_bytes());
+        buf.extend_from_slice(&self.pktid.convert_to_mqtt());
         // TODO: unsub properties
         // empty properties
         buf.push(0);

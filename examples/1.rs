@@ -19,7 +19,7 @@ async fn main() {
         handle.block_on(evloop)
     });
 
-    client.subscribe(TOPIC, ruq::QoS::AtMostOnce);
+    client.subscribe(TOPIC, ruq::QoS::AtLeastOnce);
 
     let mut client_ = client.clone();
 

@@ -1,7 +1,10 @@
-use std::convert::{TryFrom, TryInto};
+use std::{
+    convert::{TryFrom, TryInto},
+    num::NonZeroU16,
+};
 
-use super::properties::Property;
 use super::QoS;
+use super::{properties::Property, PktId};
 use super::{ConvertError, FromMqttBytes, ToMqttBytes, VBI};
 
 #[derive(Copy, Clone, Debug)]
@@ -52,7 +55,7 @@ pub struct Publish {
     payload: Payload,
     properties: Vec<Property>,
     flags: PublishFlags,
-    pktid: Option<u16>,
+    pktid: Option<NonZeroU16>,
 }
 
 #[derive(Clone, Debug)]
@@ -97,7 +100,7 @@ impl Publish {
         payload: Payload,
         retain: bool,
         properties: Vec<Property>,
-        pktid: u16,
+        pktid: NonZeroU16,
     ) -> Self {
         Self::new(
             topic,
@@ -114,7 +117,7 @@ impl Publish {
         payload: Payload,
         retain: bool,
         properties: Vec<Property>,
-        pktid: u16,
+        pktid: NonZeroU16,
     ) -> Self {
         Self::new(
             topic,
@@ -131,7 +134,7 @@ impl Publish {
         payload: Payload,
         retain: bool,
         properties: Vec<Property>,
-        pktid: Option<u16>,
+        pktid: Option<NonZeroU16>,
         qos: QoS,
     ) -> Self {
         let flags = PublishFlags {
@@ -148,6 +151,14 @@ impl Publish {
             pktid,
         }
     }
+
+    pub(crate) fn qos(&self) -> QoS {
+        self.flags.qos
+    }
+
+    pub(crate) fn pktid(&self) -> Option<NonZeroU16> {
+        self.pktid
+    }
 }
 
 impl ToMqttBytes for Publish {
@@ -160,7 +171,7 @@ impl ToMqttBytes for Publish {
 
         buf.extend_from_slice(&self.topic.convert_to_mqtt());
         if self.flags.qos > QoS::AtMostOnce {
-            buf.extend_from_slice(&self.pktid.unwrap().to_be_bytes())
+            buf.extend_from_slice(&self.pktid.unwrap().get().to_be_bytes())
         }
 
         // properties
@@ -199,26 +210,13 @@ impl FromMqttBytes for Publish {
         bytes_read += topic_bytes_read;
         variable_header_len += topic_bytes_read;
 
-        let pktid = if flags.qos > QoS::AtMostOnce {
-            let pktid = bytes[bytes_read..]
-                .get(0..2)
-                .ok_or(ConvertError::NotEnoughBytes)
-                .and_then(|slice| {
-                    slice
-                        .try_into()
-                        .map_err(|e| format!("Failed to convert to u16, reason = {:?}", e).into())
-                })
-                .map(|slice| u16::from_be_bytes(slice))?;
-
-            bytes_read += 2;
-            variable_header_len += 2;
-            Some(pktid)
+        let (pktid, pktid_bytes_read) = if flags.qos > QoS::AtMostOnce {
+            let (id, len) = PktId::convert_from_mqtt(&bytes[bytes_read..])?;
+            (Some(id), len)
         } else {
-            None
+            (None, 0)
         };
-
-        // TODO: read packet identifier if qos > 0
-        // https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc358219870
+        bytes_read += pktid_bytes_read;
 
         let (properties, props_bytes_read) =
             Vec::<Property>::convert_from_mqtt(&bytes[bytes_read..])?;

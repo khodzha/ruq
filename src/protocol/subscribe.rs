@@ -1,16 +1,16 @@
-use super::{QoS, ToMqttBytes, VBI};
+use super::{PktId, QoS, ToMqttBytes, VBI};
 
 #[derive(Debug)]
 pub struct Subscribe {
     topic: String,
-    pktid: u16,
+    pktid: PktId,
     qos: QoS,
     no_local: bool,
     retain_as_published: bool,
 }
 
 impl Subscribe {
-    pub fn new(topic: &str, pktid: u16, qos: QoS) -> Self {
+    pub fn new(topic: &str, pktid: PktId, qos: QoS) -> Self {
         Self {
             topic: topic.to_owned(),
             pktid,
@@ -36,7 +36,7 @@ impl ToMqttBytes for Subscribe {
         let mut header: Vec<u8> = vec![0b1000_0010];
         let mut buf = vec![];
 
-        buf.extend_from_slice(&self.pktid.to_be_bytes());
+        buf.extend_from_slice(&self.pktid.convert_to_mqtt());
         // TODO: sub properties
         // empty properties
         buf.push(0);

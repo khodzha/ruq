@@ -1,16 +1,16 @@
 use std::convert::{TryFrom, TryInto};
 
-use super::{ConvertError, FromMqttBytes, VBI};
+use super::{ConvertError, FromMqttBytes, PktId, VBI};
 
 #[derive(Debug)]
 pub struct Unsuback {
     properties: Vec<properties::UnsubackProperty>,
-    pktid: u16,
+    pktid: PktId,
     reason: UnsubackReason,
 }
 
 impl Unsuback {
-    pub(crate) fn pktid(&self) -> u16 {
+    pub(crate) fn pktid(&self) -> PktId {
         self.pktid
     }
 }
@@ -27,20 +27,8 @@ impl FromMqttBytes for Unsuback {
             return Err(ConvertError::NotEnoughBytes);
         }
 
-        let pktid = {
-            let pktid = bytes[bytes_read..]
-                .get(0..2)
-                .ok_or(ConvertError::NotEnoughBytes)
-                .and_then(|slice| {
-                    slice
-                        .try_into()
-                        .map_err(|e| format!("Failed to convert to u16, reason = {:?}", e).into())
-                })
-                .map(|slice| u16::from_be_bytes(slice))?;
-
-            bytes_read += 2;
-            pktid
-        };
+        let (pktid, pktid_bytes_read) = PktId::convert_from_mqtt(&bytes[bytes_read..])?;
+        bytes_read += pktid_bytes_read;
 
         let (properties, props_bytes_read) =
             Vec::<properties::UnsubackProperty>::convert_from_mqtt(&bytes[bytes_read..])?;

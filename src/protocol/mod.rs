@@ -1,4 +1,7 @@
-use std::convert::{TryFrom, TryInto};
+use std::{
+    convert::{TryFrom, TryInto},
+    num::NonZeroU16,
+};
 
 pub use connack::Connack;
 pub use connect::Connect;
@@ -300,6 +303,7 @@ impl FromMqttBytes for VBI {
 #[derive(Debug)]
 pub enum ConvertError {
     NotEnoughBytes,
+    ZeroPktId,
     Other(String),
 }
 
@@ -403,6 +407,36 @@ impl FromMqttBytes for Vec<u8> {
         } else {
             Ok((vec![], 2))
         }
+    }
+}
+
+pub(crate) type PktId = NonZeroU16;
+
+impl FromMqttBytes for PktId {
+    fn convert_from_mqtt(bytes: &[u8]) -> Result<(Self, usize), ConvertError> {
+        let id = bytes
+            .get(0..2)
+            .ok_or(ConvertError::NotEnoughBytes)
+            .and_then(|slice| {
+                slice
+                    .try_into()
+                    .map_err(|e| format!("Failed to convert to u16, reason = {:?}", e).into())
+            })
+            .and_then(|slice| {
+                u16::from_be_bytes(slice)
+                    .try_into()
+                    .map_err(|_e| ConvertError::ZeroPktId)
+            })?;
+
+        Ok((id, 2))
+    }
+}
+
+impl ToMqttBytes for PktId {
+    fn convert_to_mqtt(&self) -> Vec<u8> {
+        let mut buf: Vec<u8> = Vec::with_capacity(2);
+        buf.extend_from_slice(&self.get().to_be_bytes());
+        buf
     }
 }
 

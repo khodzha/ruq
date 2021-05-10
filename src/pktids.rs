@@ -1,5 +1,7 @@
 use std::ops::RangeInclusive;
 
+use crate::protocol::PktId;
+
 pub(crate) struct PktIds {
     start: usize,
     ranges: Vec<Node>,
@@ -15,10 +17,11 @@ enum Node {
 
 impl PktIds {
     pub(crate) fn new() -> Self {
-        Self::new_with_max(u16::MAX)
+        Self::new_with_max(PktId::new(u16::MAX).unwrap())
     }
 
-    pub(crate) fn new_with_max(max: u16) -> Self {
+    pub(crate) fn new_with_max(max: PktId) -> Self {
+        let max = max.get();
         let node = Node::Taken {
             range: 1..=max,
             next: 0,
@@ -29,7 +32,7 @@ impl PktIds {
         }
     }
 
-    pub(crate) fn next_id(&mut self) -> Option<u16> {
+    pub(crate) fn next_id(&mut self) -> Option<PktId> {
         // take node out of vec
         let old_start = self.start;
         let mut node = match self.ranges.get_mut(old_start) {
@@ -77,10 +80,14 @@ impl PktIds {
             None => {}
         }
 
-        result
+        match result {
+            Some(pktid) => PktId::new(pktid),
+            None => None,
+        }
     }
 
-    pub(crate) fn return_id(&mut self, id: u16) {
+    pub(crate) fn return_id(&mut self, id: PktId) {
+        let id = id.get();
         let mut prev_idx = None;
         let mut next_idx = self.start;
         while let Some(Node::Taken { range, next }) = self.ranges.get(next_idx) {
@@ -198,58 +205,58 @@ impl PktIds {
 
 #[cfg(test)]
 mod tests {
-    use super::PktIds;
+    use super::{PktId, PktIds};
 
     #[test]
     fn fetch_ids() {
         let mut pktids = PktIds::new();
-        assert_eq!(pktids.next_id(), Some(1));
-        assert_eq!(pktids.next_id(), Some(2));
+        assert_eq!(pktids.next_id().map(PktId::get), Some(1));
+        assert_eq!(pktids.next_id().map(PktId::get), Some(2));
     }
 
     #[test]
     fn fetch_ids_exhausted() {
-        let mut pktids = PktIds::new_with_max(5);
-        assert_eq!(pktids.next_id(), Some(1));
-        assert_eq!(pktids.next_id(), Some(2));
-        assert_eq!(pktids.next_id(), Some(3));
-        assert_eq!(pktids.next_id(), Some(4));
-        assert_eq!(pktids.next_id(), Some(5));
-        assert_eq!(pktids.next_id(), None);
-        assert_eq!(pktids.next_id(), None);
+        let mut pktids = PktIds::new_with_max(PktId::new(5).unwrap());
+        assert_eq!(pktids.next_id().map(PktId::get), Some(1));
+        assert_eq!(pktids.next_id().map(PktId::get), Some(2));
+        assert_eq!(pktids.next_id().map(PktId::get), Some(3));
+        assert_eq!(pktids.next_id().map(PktId::get), Some(4));
+        assert_eq!(pktids.next_id().map(PktId::get), Some(5));
+        assert_eq!(pktids.next_id().map(PktId::get), None);
+        assert_eq!(pktids.next_id().map(PktId::get), None);
     }
 
     #[test]
     fn return_ids() {
-        let mut pktids = PktIds::new_with_max(12);
+        let mut pktids = PktIds::new_with_max(PktId::new(12).unwrap());
         for i in 1..10 {
-            assert_eq!(pktids.next_id(), Some(i));
+            assert_eq!(pktids.next_id().map(PktId::get), Some(i));
         }
-        pktids.return_id(3);
-        pktids.return_id(4);
-        assert_eq!(pktids.next_id(), Some(3));
-        assert_eq!(pktids.next_id(), Some(4));
-        pktids.return_id(3);
-        pktids.return_id(4);
-        pktids.return_id(1);
-        assert_eq!(pktids.next_id(), Some(1));
-        assert_eq!(pktids.next_id(), Some(3));
-        assert_eq!(pktids.next_id(), Some(4));
-        assert_eq!(pktids.next_id(), Some(10));
+        pktids.return_id(PktId::new(3).unwrap());
+        pktids.return_id(PktId::new(4).unwrap());
+        assert_eq!(pktids.next_id().map(PktId::get), Some(3));
+        assert_eq!(pktids.next_id().map(PktId::get), Some(4));
+        pktids.return_id(PktId::new(3).unwrap());
+        pktids.return_id(PktId::new(4).unwrap());
+        pktids.return_id(PktId::new(1).unwrap());
+        assert_eq!(pktids.next_id().map(PktId::get), Some(1));
+        assert_eq!(pktids.next_id().map(PktId::get), Some(3));
+        assert_eq!(pktids.next_id().map(PktId::get), Some(4));
+        assert_eq!(pktids.next_id().map(PktId::get), Some(10));
     }
 
     #[test]
     fn return_ids2() {
-        let mut pktids = PktIds::new_with_max(12);
+        let mut pktids = PktIds::new_with_max(PktId::new(12).unwrap());
         for i in 1..10 {
-            assert_eq!(pktids.next_id(), Some(i));
+            assert_eq!(pktids.next_id().map(PktId::get), Some(i));
         }
-        pktids.return_id(1);
-        pktids.return_id(3);
-        pktids.return_id(4);
-        assert_eq!(pktids.next_id(), Some(1));
-        assert_eq!(pktids.next_id(), Some(3));
-        assert_eq!(pktids.next_id(), Some(4));
-        assert_eq!(pktids.next_id(), Some(10));
+        pktids.return_id(PktId::new(1).unwrap());
+        pktids.return_id(PktId::new(3).unwrap());
+        pktids.return_id(PktId::new(4).unwrap());
+        assert_eq!(pktids.next_id().map(PktId::get), Some(1));
+        assert_eq!(pktids.next_id().map(PktId::get), Some(3));
+        assert_eq!(pktids.next_id().map(PktId::get), Some(4));
+        assert_eq!(pktids.next_id().map(PktId::get), Some(10));
     }
 }

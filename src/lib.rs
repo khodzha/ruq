@@ -16,7 +16,7 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 
 use log::{error, info};
 
-use crate::protocol::DisconnectReason;
+use crate::protocol::{DisconnectReason, PktId};
 
 pub use crate::client::{Client, Notification, PublishBuilder};
 pub use crate::protocol::Property;
@@ -185,6 +185,20 @@ async fn poll(
                             }
                             protocol::Packet::PubAck(m) => {
                                 pktids.return_id(m.pktid());
+                            }
+                            protocol::Packet::Publish(m) => {
+                                match m.qos() {
+                                    QoS::AtMostOnce => {},
+                                    QoS::AtLeastOnce => {
+                                        let pkt = protocol::Puback::new(m.pktid().unwrap());
+                                        mqtt_write.send(protocol::Packet::PubAck(pkt));
+                                    }
+                                    QoS::ExactlyOnce => {
+                                        todo!("Send pubrec");
+                                    }
+                                }
+
+                                sender.send(Notification::Message(format!("{:?}", m))).await;
                             }
                             m => {
                                 sender.send(Notification::Message(format!("{:?}", m))).await;
