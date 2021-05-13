@@ -2,6 +2,7 @@ use std::io::{Error as IOError, ErrorKind, Result as IOResult};
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
+use std::collections::VecDeque;
 
 use anyhow::{anyhow, Error as AnyError, Result as AnyResult};
 use futures::channel::mpsc::{Receiver, Sender};
@@ -14,9 +15,9 @@ use tokio::net::ToSocketAddrs;
 use tokio::time::{Duration, Instant};
 use tokio_util::codec::{FramedRead, FramedWrite};
 
-use log::{error, info};
+use log::{error, info, warn};
 
-use crate::protocol::{DisconnectReason, PktId};
+use crate::protocol::{DisconnectReason, PktId, Publish};
 
 pub use crate::client::{Client, Notification, PublishBuilder};
 pub use crate::protocol::Property;
@@ -146,6 +147,9 @@ async fn poll(
     let mut pingresp_received = None;
 
     let mut pktids = pktids::PktIds::new();
+    // todo: on conversion from future<output = connection_result> to stream<item = connection_result>
+    // we should save this queue on disconnect and read from it first if user establishes new connection
+    let mut queue: VecDeque<(PktId, Box<Publish>)> = VecDeque::new();
 
     loop {
         tokio::select! {
@@ -184,6 +188,12 @@ async fn poll(
                                 sender.send(Notification::UnsubAck(format!("{:?}", m))).await;
                             }
                             protocol::Packet::PubAck(m) => {
+                                if let Some(idx) = queue.iter().position(|(pktid, _)| *pktid == m.pktid()) {
+                                    queue.remove(idx);
+                                } else {
+                                    warn!("Failed to find message to ack in the queue");
+                                }
+
                                 pktids.return_id(m.pktid());
                             }
                             protocol::Packet::Publish(m) => {
@@ -191,7 +201,7 @@ async fn poll(
                                     QoS::AtMostOnce => {},
                                     QoS::AtLeastOnce => {
                                         let pkt = protocol::Puback::new(m.pktid().unwrap());
-                                        mqtt_write.send(protocol::Packet::PubAck(pkt));
+                                        mqtt_write.send(protocol::Packet::PubAck(pkt)).await?;
                                     }
                                     QoS::ExactlyOnce => {
                                         todo!("Send pubrec");
@@ -225,7 +235,11 @@ async fn poll(
                                 }
                                 QoS::AtLeastOnce => {
                                     match pktids.next_id() {
-                                        Some(pktid) => protocol::Publish::at_least_once(topic, payload, retain, properties, pktid),
+                                        Some(pktid) => {
+                                            let pkt = protocol::Publish::at_least_once(topic, payload, retain, properties, pktid);
+                                            queue.push_back((pktid, Box::new(pkt.clone())));
+                                            pkt
+                                        }
                                         None => todo!(),
                                     }
                                 }
@@ -236,25 +250,25 @@ async fn poll(
                                     }
                                 }
                             };
-                            mqtt_write.send(protocol::Packet::Publish(pkt)).await;
+                            mqtt_write.send(protocol::Packet::Publish(pkt)).await?;
                         }
                         Command::Subscribe(topic, qos) => {
                             let pkt = match pktids.next_id() {
                                 Some(pktid) => protocol::Subscribe::new(&topic, pktid, qos),
                                 None => todo!(),
                             };
-                            mqtt_write.send(protocol::Packet::Subscribe(pkt)).await;
+                            mqtt_write.send(protocol::Packet::Subscribe(pkt)).await?;
                         }
                         Command::Unsubscribe(topics) => {
                             let pkt = match pktids.next_id() {
                                 Some(pktid) => protocol::Unsubscribe::new(topics, pktid),
                                 None => todo!(),
                             };
-                            mqtt_write.send(protocol::Packet::Unsubscribe(pkt)).await;
+                            mqtt_write.send(protocol::Packet::Unsubscribe(pkt)).await?;
                         }
                         Command::Disconnect => {
                             let pkt = protocol::Disconnect::new();
-                            mqtt_write.send(protocol::Packet::Disconnect(pkt)).await;
+                            mqtt_write.send(protocol::Packet::Disconnect(pkt)).await?;
                             return Ok(());
                         }
                     }
