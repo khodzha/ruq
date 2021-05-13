@@ -3,7 +3,7 @@ use futures::channel::mpsc::{channel, Receiver, Sender};
 use tokio::net::TcpStream;
 use tokio::net::ToSocketAddrs;
 
-use crate::protocol::Property;
+use crate::protocol::{Connack, Property};
 use crate::{Payload, QoS};
 
 use super::*;
@@ -15,7 +15,7 @@ pub struct Client {
 
 #[derive(Debug)]
 pub enum Notification {
-    ConnAck(String),
+    ConnAck(Connack),
     SubAck(String),
     Message(String),
     UnsubAck(String),

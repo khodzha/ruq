@@ -10,6 +10,13 @@ pub struct Connack {
     reason: ConnackReason,
     properties: Vec<properties::ConnackProperty>,
 }
+
+impl Connack {
+    pub fn reason(&self) -> ConnackReason {
+        self.reason
+    }
+}
+
 #[derive(Debug)]
 pub struct ConnackFlags {
     pub session_present: bool,
@@ -31,7 +38,7 @@ impl TryFrom<u8> for ConnackFlags {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ConnackReason {
     Success,
     UnspecifiedError,

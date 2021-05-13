@@ -1,8 +1,8 @@
+use std::collections::VecDeque;
 use std::io::{Error as IOError, ErrorKind, Result as IOResult};
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
-use std::collections::VecDeque;
 
 use anyhow::{anyhow, Error as AnyError, Result as AnyResult};
 use futures::channel::mpsc::{Receiver, Sender};
@@ -127,16 +127,26 @@ async fn poll(
 
     mqtt_write.send(protocol::Packet::Connect(pkt)).await?;
 
-    let pkt = mqtt_read.next().await;
-    // TODO: pkt must be a connack with ConnackReason::Success
-    match sender
-        .send(Notification::ConnAck(format!("{:?}", pkt)))
-        .await
-    {
-        Ok(()) => {}
-        Err(e) => {
-            // TODO: if we failed to send notification to client code, what should we do here and below?
-            // probably send disconnect without acking any incoming messages?
+    let pkt = loop {
+        if let Some(pkt) = mqtt_read.next().await {
+            break pkt?;
+        }
+    };
+    match pkt {
+        protocol::Packet::Connack(p) => {
+            info!("Received connack: {:?}", p);
+            // TODO: pkt must be a connack with ConnackReason::Success
+            match sender.send(Notification::ConnAck(p)).await {
+                Ok(()) => {}
+                Err(e) => {
+                    // TODO: if we failed to send notification to client code, what should we do here and below?
+                    // probably send disconnect without acking any incoming messages?
+                }
+            }
+        }
+        _ => {
+            error!("Expected connack, received: {:?}", pkt);
+            return Err(IOError::new(ErrorKind::InvalidData, "Unexpected packet"));
         }
     }
 
