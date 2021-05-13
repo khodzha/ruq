@@ -159,6 +159,14 @@ impl Publish {
     pub(crate) fn pktid(&self) -> Option<NonZeroU16> {
         self.pktid
     }
+
+    pub(crate) fn topic(&self) -> &str {
+        &self.topic
+    }
+
+    pub(crate) fn payload(&self) -> &Payload {
+        &self.payload
+    }
 }
 
 impl ToMqttBytes for Publish {
@@ -217,6 +225,7 @@ impl FromMqttBytes for Publish {
             (None, 0)
         };
         bytes_read += pktid_bytes_read;
+        variable_header_len += pktid_bytes_read;
 
         let (properties, props_bytes_read) =
             Vec::<Property>::convert_from_mqtt(&bytes[bytes_read..])?;
@@ -225,9 +234,13 @@ impl FromMqttBytes for Publish {
 
         let payload_len = remaining_len - variable_header_len;
         let payload: Payload =
-            match std::str::from_utf8(&bytes[bytes_read..bytes_read + payload_len]) {
-                Ok(s) => s.into(),
-                Err(_e) => (&bytes[bytes_read..bytes_read + payload_len]).into(),
+            if properties.iter().any(|prop| matches!(prop, Property::PayloadFormatId(1))) {
+                match std::str::from_utf8(&bytes[bytes_read..bytes_read + payload_len]) {
+                    Ok(s) => s.into(),
+                    Err(e) => return Err(ConvertError::Other(format!("{:?}", e))),
+                }
+            } else {
+                (&bytes[bytes_read..bytes_read + payload_len]).into()
             };
         bytes_read += payload_len;
 
@@ -239,5 +252,70 @@ impl FromMqttBytes for Publish {
             pktid,
         };
         Ok((publish, bytes_read))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_qos0() {
+        let bytes = [
+            0b0011_0000, // dup = 0 qos = 0 retain = 0
+            9, // remaining len
+            0, 1, b'q', // topic 'q'
+            0, // empty props
+            1,2,3,4,5 // payload [1..5]
+        ];
+        let (r, len) = Publish::convert_from_mqtt(&bytes).expect("Failed to parse publish bytes");
+        assert_eq!(len, 11);
+        assert_eq!(r.pktid(), None);
+        assert_eq!(r.topic(), "q");
+        match r.payload() {
+            Payload::Bytes(b) if &[1,2,3,4,5] == &b[..] => {
+                // ok
+            },
+            p => panic!("Invalid payload {:?}", p)
+        }
+    }
+
+    #[test]
+    fn parse_qos0_payload_str() {
+        let bytes = [
+            0b0011_0000, // dup = 0 qos = 0 retain = 0
+            11, // remaining len
+            0, 1, b'w', // topic 'w'
+            2, // proplen = 2bytes
+            0x01, 1, // Payload Format Indicator = String
+            b'a',b'c',b'e',b'g',b'z' // payload 'acegz'
+        ];
+        let (r, len) = Publish::convert_from_mqtt(&bytes).expect("Failed to parse publish bytes");
+        assert_eq!(len, 13);
+        assert_eq!(r.pktid(), None);
+        assert_eq!(r.topic(), "w");
+        match r.payload() {
+            Payload::String(b) if b == "acegz" => {
+                // ok
+            },
+            p => panic!("Invalid payload {:?}", p)
+        }
+    }
+
+    #[test]
+    fn parse_qos1() {
+        let bytes = [
+            0b0011_0010, // dup = 0 qos = 1 retain = 0
+            11, // remaining len
+            0, 1, b't', // topic 't'
+            0, 10, // pktid
+            0, // empty props
+            1,2,3,4,5 // payload [1..5]
+        ];
+        let (r, len) = Publish::convert_from_mqtt(&bytes).expect("Failed to parse publish bytes");
+        assert_eq!(len, 13);
+        assert_eq!(r.pktid().expect("Pktid").get(), 10);
+        assert_eq!(r.topic(), "t");
+        // assert_eq!(r.payload, [1,2,3,4,5]);
     }
 }
